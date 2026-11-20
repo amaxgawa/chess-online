@@ -71,6 +71,7 @@
       <symbol id="i-play" viewBox="0 0 24 24"><path d="M6 4l14 8-14 8V4z"/></symbol>
       <symbol id="i-pause" viewBox="0 0 24 24"><path d="M7 4h3v16H7zM14 4h3v16h-3z"/></symbol>
       <symbol id="i-mail" viewBox="0 0 24 24"><rect x="2" y="4" width="20" height="16" rx="2"/><path d="m22 6-10 7L2 6"/></symbol>
+      <symbol id="i-bot" viewBox="0 0 24 24"><rect x="4" y="8" width="16" height="12" rx="3"/><path d="M12 4v4M9 13v1.5M15 13v1.5M9.5 17h5M2 13v3M22 13v3"/><circle cx="12" cy="3.5" r="1"/></symbol>
       <symbol id="i-board" viewBox="0 0 24 24"><rect x="3" y="3" width="18" height="18" rx="2"/><path d="M3 9h18M3 15h18M9 3v18M15 3v18"/></symbol>
       <symbol id="i-info" viewBox="0 0 24 24"><circle cx="12" cy="12" r="10"/><path d="M12 16v-4M12 8h.01"/></symbol>
       <symbol id="i-edit" viewBox="0 0 24 24"><path d="M12 20h9"/><path d="M16.5 3.5a2.12 2.12 0 0 1 3 3L7 19l-4 1 1-4L16.5 3.5z"/></symbol>
@@ -128,7 +129,7 @@
         <div class="brand-sm"><span class="brand-mark sm"><i class="pc pc-wn" data-g="♘"></i></span><b>Chess Lounge</b></div>
         <button class="conn-pill" id="conn-pill" data-action="conn-info"><i class="dot"></i><span>연결 중</span></button>
         <nav class="top-actions">
-          <button class="tbtn" data-action="practice" title="혼자 연습 / 한 기기에서 둘이 두기"><svg class="ic"><use href="#i-board"/></svg><span>연습</span></button>
+          <button class="tbtn tbtn-bot" data-action="practice" title="컴퓨터와 대전 · 한 기기에서 둘이 두기"><svg class="ic"><use href="#i-bot"/></svg><span>봇 대전</span></button>
           <button class="tbtn" data-action="stats" title="내 전적"><svg class="ic"><use href="#i-chart"/></svg><span>전적</span></button>
           <button class="tbtn" data-action="settings" title="설정"><svg class="ic"><use href="#i-gear"/></svg><span>설정</span></button>
           <button class="icon-btn" data-action="theme" aria-label="테마 전환" title="테마 전환">
@@ -211,6 +212,7 @@
         <div class="board-area" id="board-area">
           <div class="board-top-ui">
             <button class="tbtn glass" data-action="game-exit" id="game-exit"><svg class="ic"><use href="#i-back"/></svg><span>나가기</span></button>
+            <button class="tbtn glass pause-btn" data-action="g-pause" id="game-pause" title="일시정지 (Esc)" hidden></button>
             <div class="game-status glass" id="game-status"></div>
             <div class="view-ctrls glass">
               <button class="icon-btn" data-action="view-default" title="기본 시점"><svg class="ic"><use href="#i-cube"/></svg></button>

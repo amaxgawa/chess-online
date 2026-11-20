@@ -2,7 +2,8 @@
 import { el, esc, fmtDate, timeAgo, fmtTCShort } from './util.js';
 import { avatar, tierBadge, icon, pieceIcon, openModal } from './ui.js';
 import * as store from './store.js';
-import { REASONS, RATING_START } from './config.js';
+import { REASONS, RATING_START, BOT_LEVELS } from './config.js';
+import { openBotSetup } from './bot.js';
 
 const NS = 'http://www.w3.org/2000/svg';
 
@@ -124,6 +125,7 @@ export function openStats(app) {
   const p = app.profile;
   const s = store.getStats();
   const hist = store.getHistory();
+  const bot = store.getBotData();
   const total = s.w + s.l + s.d;
   const wr = total ? Math.round((s.w / total) * 100) : 0;
   const streak = s.streak > 0 ? `${s.streak}연승` : s.streak < 0 ? `${-s.streak}연패` : '-';
@@ -141,6 +143,7 @@ export function openStats(app) {
       <button class="on" data-tab="sum">요약</button>
       <button data-tab="games">최근 대국 <span class="count">${hist.length}</span></button>
       <button data-tab="opps">상대 전적</button>
+      <button data-tab="bot">봇 대전 <span class="count">${bot.games.length}</span></button>
     </div>
     <div data-pane="sum" style="display:flex;flex-direction:column;gap:12px">
       <div class="stat-cards">
@@ -192,6 +195,27 @@ export function openStats(app) {
         }).join('')}</div>`;
       })()}
     </div>
+    <div data-pane="bot" class="bot-pane" hidden>
+      <div class="bot-pane-head"><span>난이도별 기록 <span class="muted" style="font-weight:600">· 레이팅에는 반영되지 않아요</span></span>
+        <button class="btn btn-sm btn-primary" data-bot-new>${icon('bot', 'sm')}<span>봇과 한 판</span></button></div>
+      <div class="bot-recs">${BOT_LEVELS.slice(1).map((lv, i) => {
+        const r = { w: 0, d: 0, l: 0, ...(bot.byLevel[i + 1] || {}) };
+        const t = r.w + r.d + r.l;
+        return `<div class="bot-rec">${avatar({ p: lv.p, h: lv.h }, 34)}<div class="br-main"><b>${esc(lv.name)}</b>
+          <small>${t ? `${r.w}승 ${r.d}무 ${r.l}패 · 승률 ${Math.round((r.w / t) * 100)}%` : '아직 안 붙어봤어요'}</small>${wlBar(r.w, r.d, r.l)}</div></div>`;
+      }).join('')}</div>
+      ${bot.games.length ? `<div class="game-rows">${bot.games.map((g, i) => {
+        const res = { win: '승', loss: '패', draw: '무' }[g.result] || '-';
+        return `<div class="game-row">
+          <span class="res-badge ${g.result}">${res}</span>
+          <div class="gr-main">
+            <div class="t">${pieceIcon(g.color + 'k')}<span style="overflow:hidden;text-overflow:ellipsis">vs ${esc(g.opp?.name || '봇')}</span></div>
+            <div class="s">${esc(REASONS[g.reason] || '')} · ${Math.ceil((g.plies || 0) / 2)}수 · ${esc(timeAgo(g.at))}</div>
+          </div>
+          <button class="btn btn-sm btn-soft gr-act" data-replay-bot="${i}">${icon('play', 'sm')}<span>다시보기</span></button>
+        </div>`;
+      }).join('')}</div>` : '<div class="empty-mini">아직 봇과 둔 대국이 없어요.</div>'}
+    </div>
     <p class="hint">전적은 이 브라우저에 저장돼요. 닉네임을 바꿔도 그대로 유지되고, 다른 기기로 옮기려면 설정 › 데이터에서 백업 코드를 사용하세요.</p>
   </div>`);
   const m = openModal({ title: '내 전적', body, size: 'lg' });
@@ -203,6 +227,13 @@ export function openStats(app) {
     for (const pane of body.querySelectorAll('[data-pane]')) pane.hidden = pane.dataset.pane !== b.dataset.tab;
   });
   body.addEventListener('click', (e) => {
+    if (e.target.closest('[data-bot-new]')) { m.close(); openBotSetup(app); return; }
+    const rb = e.target.closest('[data-replay-bot]');
+    if (rb) {
+      const rec = bot.games[+rb.dataset.replayBot];
+      if (rec) { m.close(); app.replayGame(rec); }
+      return;
+    }
     const r = e.target.closest('[data-replay]');
     if (!r) return;
     const rec = hist[+r.dataset.replay];

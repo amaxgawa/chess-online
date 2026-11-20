@@ -64,3 +64,12 @@ export const REASONS = {
   timeoutvsinsufficient: '시간 초과 (기물 부족)',
   aborted: '게임 취소',
 };
+
+// vs-computer difficulty (engine presets live in js/engine/engine.js LEVELS)
+export const BOT_LEVELS = [null,
+  { name: '입문', desc: '이제 막 규칙을 배운 수준. 실수를 자주 해요', h: 152, p: 'p' },
+  { name: '초급', desc: '눈앞의 기물은 챙기지만 허점이 많아요', h: 186, p: 'n' },
+  { name: '중급', desc: '3수 앞을 읽고 오프닝도 알아요', h: 48, p: 'b' },
+  { name: '상급', desc: '5~6수 앞까지 계산해요. 방심하면 져요', h: 262, p: 'r' },
+  { name: '최강', desc: '한 수에 2초 가까이 깊게 읽어요', h: 330, p: 'q' },
+];

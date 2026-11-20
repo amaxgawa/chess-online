@@ -877,3 +877,39 @@ input[type="range"] { accent-color: var(--primary); width: 160px; }
 @media (prefers-reduced-motion: reduce) {
   *, *::before, *::after { animation-duration: .01ms !important; animation-iteration-count: 1 !important; transition-duration: .01ms !important; }
 }
+
+/* ═════════════════════════════ PAUSE BUTTON / BOT MODE ═════════════════════════════ */
+.pause-btn kbd { font: 700 10.5px/1 ui-monospace, Consolas, monospace; padding: 3px 5px; border-radius: 5px; border: 1px solid var(--line-2); color: var(--text-3); background: var(--surface-3); }
+.pause-btn.on { color: var(--accent); }
+.pause-btn:disabled { opacity: .6; cursor: default; }
+.game-status.thinking { color: var(--text-2); }
+.game-status .dots { display: inline-flex; gap: 3px; margin-left: 3px; align-self: flex-end; padding-bottom: 5px; }
+.game-status .dots i { width: 4px; height: 4px; border-radius: 50%; background: currentColor; animation: dotBlink 1.2s infinite; }
+.game-status .dots i:nth-child(2) { animation-delay: .2s; }
+.game-status .dots i:nth-child(3) { animation-delay: .4s; }
+@keyframes dotBlink { 0%, 80%, 100% { opacity: .2; } 40% { opacity: 1; } }
+
+.bot-setup { display: flex; flex-direction: column; gap: 18px; }
+.bot-levels { display: flex; flex-direction: column; gap: 8px; }
+.bot-lv {
+  display: flex; align-items: center; gap: 12px; width: 100%; padding: 9px 14px 9px 9px; border-radius: 16px; text-align: left;
+  border: 1.5px solid var(--line-2); background: var(--surface); color: var(--text); transition: all .18s var(--ease);
+}
+.bot-lv:hover { border-color: var(--primary); }
+.bot-lv.on { border-color: var(--primary); background: var(--primary-soft); }
+.bot-lv .bl-main { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 2px; }
+.bot-lv .bl-main b { font-size: 15px; font-weight: 800; }
+.bot-lv .bl-main small { font-size: 12.5px; font-weight: 600; color: var(--text-2); }
+.bot-lv .bl-rec { font-size: 12px; font-weight: 750; color: var(--text-3); white-space: nowrap; }
+.bot-lv.on .bl-rec { color: var(--primary); }
+.bot-modal .modal-foot .btn-ghost { margin-right: auto; }
+
+.bot-recs { display: grid; grid-template-columns: repeat(auto-fill, minmax(190px, 1fr)); gap: 8px; }
+.bot-rec { display: flex; align-items: center; gap: 10px; padding: 10px 12px; border-radius: 14px; border: 1px solid var(--line); background: var(--surface); }
+.bot-rec .br-main { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 4px; }
+.bot-rec b { font-size: 14px; font-weight: 800; }
+.bot-rec small { font-size: 12px; font-weight: 650; color: var(--text-2); }
+.bot-pane { display: flex; flex-direction: column; gap: 12px; }
+.bot-pane-head { display: flex; align-items: center; justify-content: space-between; gap: 10px; font-weight: 800; font-size: 14px; color: var(--text-2); }
+@media (max-width: 860px) { .pause-btn kbd { display: none; } }
+@media (max-width: 420px) { .bot-lv .bl-main small { display: none; } }

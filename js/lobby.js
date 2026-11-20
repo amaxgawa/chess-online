@@ -43,7 +43,7 @@ function reconcile(container, items, keyFn, sigFn, renderFn) {
 }
 
 export function statusLabel(st) {
-  return { lobby: '로비', room: '대기실', game: '게임중', spec: '관전중', practice: '연습중' }[st] || '로비';
+  return { lobby: '로비', room: '대기실', game: '게임중', spec: '관전중', practice: '연습중', bot: '봇 대전중' }[st] || '로비';
 }
 
 export class Lobby {

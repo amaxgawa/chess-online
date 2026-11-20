@@ -9,6 +9,7 @@ import { Lobby } from './lobby.js';
 import { RoomController } from './room.js';
 import { GameController, localInfo, replayInfo, replayResult } from './game.js';
 import { openStats } from './stats.js';
+import { BotClient, botInfo, openBotSetup } from './bot.js';
 import { openSettings, openProfileEditor, openConnInfo, avatarPicker, sanitizeName, openPieceSetPicker } from './settings.js';
 import { loadPieceSets, preloadAll, getSet, readySet, ensureSet, ROLES } from './pieceSets.js';
 import {
@@ -25,6 +26,7 @@ class App {
     this.uid = this.profile.uid;
     this.settings = store.getSettings();
     this.sfx = new Sound();
+    this.botClient = new BotClient();
     this.room = null;
     this.game = null;
     this.screen = 'boot';
@@ -133,8 +135,8 @@ class App {
     this.lobby.renderMe();
     const g = this.game;
     if (g && g.mode === 'local' && !g.destroyed) {
-      g.info.w.ps = id;
-      g.info.b.ps = id;
+      if (g.bot) g.info[g.human].ps = id;
+      else { g.info.w.ps = id; g.info.b.ps = id; }
       this.applyGameSets(g.info);
       g.renderAll();
     }
@@ -186,7 +188,7 @@ class App {
       st = g && g.room === this.room && !g.over && this.screen === 'game' ? (g.isPlayer ? 'game' : 'spec') : 'room';
       if (g && g.room === this.room && g.isPlayer && !g.over) st = 'game';
       if (this.room.isHost && this.room.state) room = this.room.summary();
-    } else if (this.game?.mode === 'local' && this.screen === 'game') st = 'practice';
+    } else if (this.game?.mode === 'local' && this.screen === 'game') st = this.game.bot ? 'bot' : 'practice';
     return {
       v: PROTOCOL, ver: APP_VERSION, uid: this.uid, name: this.profile.name, av: this.profile.av,
       rating: s.rating, rec: { w: s.w, l: s.l, d: s.d }, st, rid, room,
@@ -425,7 +427,9 @@ class App {
     if (!g) { this.backToRoom(); return; }
     if (g.mode === 'local') {
       if (g.moves.length && !g.over) {
-        const ok = await confirmDialog({ title: '연습 종료', message: '연습 게임을 끝낼까요?', ok: '끝내기' });
+        const ok = await confirmDialog(g.bot
+          ? { title: '대국 종료', message: '봇과의 대국을 그만둘까요? 끝나지 않은 판은 기록되지 않아요.', ok: '그만두기' }
+          : { title: '연습 종료', message: '연습 게임을 끝낼까요?', ok: '끝내기' });
         if (!ok) return;
       }
       this.backToRoom();
@@ -512,6 +516,14 @@ class App {
     this.enterGame(gc);
   }
 
+  /** human: 'w' | 'b' */
+  startBotGame({ level, human }) {
+    if (this.room && !this.room.closed) { toast('봇 대전은 방에서 나온 뒤 할 수 있어요'); return; }
+    const bot = { level, color: human === 'w' ? 'b' : 'w' };
+    const gc = new GameController(this, { mode: 'local', bot, info: botInfo(this.profile, this.settings.pieceSet, bot) });
+    this.enterGame(gc);
+  }
+
   replayGame(rec) {
     if (this.game && this.game.isPlayer && !this.game.over) { toast('게임 중에는 다시보기를 열 수 없어요'); return; }
     const moves = String(rec.moves || '').split(' ').filter(Boolean);
@@ -580,7 +592,7 @@ class App {
     const g = this.game, r = this.room;
     switch (a) {
       case 'theme': this.toggleTheme(); break;
-      case 'practice': this.startPractice(); break;
+      case 'practice': openBotSetup(this); break;
       case 'stats': this.openStats(); break;
       case 'settings': this.openSettings(); break;
       case 'pick-set': openPieceSetPicker(this); break;
@@ -613,7 +625,7 @@ class App {
       case 'g-resign': g?.resign(); break;
       case 'g-pgn': g?.copyPgn(); break;
       case 'g-room': this.backToRoom(); break;
-      case 'g-new': g?.newLocalGame(); break;
+      case 'g-new': if (g?.bot) openBotSetup(this); else g?.newLocalGame(); break;
       case 'g-pause': g?.togglePause(); break;
       case 'g-autoflip': if (g) { g.autoFlip = !g.autoFlip; g.renderAll(); toast(g.autoFlip ? '수를 둘 때마다 보드를 돌려요' : '자동 회전을 껐어요', { timeout: 1600, icon: 'swap' }); } break;
       case 'g-auto': g?.toggleAutoplay(); break;

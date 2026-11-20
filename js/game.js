@@ -6,6 +6,7 @@ import { $, el, esc, fmtClock, fmtTC, copyText, fmtDate } from './util.js';
 import { avatar, tierBadge, icon, pieceIcon, toast, openModal, confirmDialog, confetti } from './ui.js';
 import * as store from './store.js';
 import { REASONS, PIECE_VALUE, APP_NAME } from './config.js';
+import { openBotSetup } from './bot.js';
 
 const FLAG_GRACE = 2500;      // ms we wait past zero before claiming the opponent's flag
 const ABANDON_WAIT = 45_000;  // ms before we may claim a win from a disconnected opponent
@@ -24,7 +25,7 @@ function parseUci(u) { return { from: u.slice(0, 2), to: u.slice(2, 4), promotio
 const other = (c) => (c === 'w' ? 'b' : 'w');
 
 export class GameController {
-  constructor(app, { mode, room = null, info, myColor = null, resume = null, replay = null }) {
+  constructor(app, { mode, room = null, info, myColor = null, resume = null, replay = null, bot = null }) {
     this.app = app;
     this.board = app.board;
     this.mode = mode;
@@ -46,7 +47,10 @@ export class GameController {
     this._pauseCdUntil = 0;
     this.goneAt = {};
     this.destroyed = false;
-    this.orient = myColor || (replay?.color) || 'w';
+    this.bot = bot; // { color: bot's side, level 1..5 } in 'local' mode
+    this._botToken = 0;
+    this._botBusy = false;
+    this.orient = myColor || (replay?.color) || (bot ? other(bot.color) : 'w');
     this.autoFlip = false;
     this.resume = resume;
     this._resyncClock = !!resume;
@@ -110,6 +114,7 @@ export class GameController {
     this.renderAll();
     this._updateInteraction();
     if (this.mode === 'replay' && this.replay.autoplay) this.toggleAutoplay();
+    this._maybeBotMove(1300);
   }
 
   destroy() {
@@ -119,6 +124,7 @@ export class GameController {
     clearInterval(this._auto);
     clearTimeout(this._resumeT);
     clearTimeout(this._pauseReqT);
+    this._cancelBot();
     window.removeEventListener('keydown', this._keys);
     this._closePrompts();
     const veil = $('#pause-veil');
@@ -184,13 +190,14 @@ export class GameController {
     this.board.setLastMove(mv.from, mv.to);
     this.board.setCheck(this.chess.inCheck() ? this._kingSq(this.turn) : null);
     if (local && this.isPlayer) this._sendMove(mv);
-    if (this.mode === 'local' && this.autoFlip && !this.chess.isGameOver()) {
+    if (this.mode === 'local' && !this.bot && this.autoFlip && !this.chess.isGameOver()) {
       setTimeout(() => { if (!this.destroyed) { this.orient = this.turn; this.board.setOrientation(this.orient, true); this.renderAll(); } }, 650);
     }
     this._checkEnd(mv);
     this.renderAll();
     this._updateInteraction();
     if (this.isPlayer && !this.over) this.saveActive();
+    this._maybeBotMove();
     return mv;
   }
 
@@ -244,7 +251,7 @@ export class GameController {
       canPick = (color) => color === this.myColor && this.turn === this.myColor && this.pauseReq !== this.myColor;
     } else if (this.live && this.mode === 'local') {
       enabled = true;
-      canPick = (color) => color === this.turn;
+      canPick = (color) => color === this.turn && (!this.bot || color === this.human);
     }
     this.board.setInteraction({
       enabled, canPick,
@@ -259,6 +266,7 @@ export class GameController {
 
   _onBoardMove(from, to) {
     if (!this.live || this.paused || (this.isPlayer && this.pauseReq === this.myColor)) return false;
+    if (this.bot && this.turn !== this.human) return false;
     const cands = this.chess.moves({ square: from, verbose: true }).filter((m) => m.to === to);
     if (!cands.length) return false;
     if (cands.some((m) => m.promotion)) {
@@ -477,7 +485,17 @@ export class GameController {
   }
 
   async resign(skipConfirm = false) {
-    if (this.over || !this.isPlayer) return;
+    if (this.over) return;
+    if (this.bot) {
+      if (!skipConfirm) {
+        const ok = await confirmDialog({ title: '기권', message: '이번 판을 기권할까요? 봇 대전 기록에 패배로 남아요.', ok: '기권하기', danger: true });
+        if (!ok || this.over) return;
+      }
+      this._cancelBot();
+      this._finish(this.human === 'w' ? '0-1' : '1-0', 'resign');
+      return;
+    }
+    if (!this.isPlayer) return;
     if (!skipConfirm && this.app.settings.confirmResign) {
       const ok = await confirmDialog({ title: '기권', message: '정말 기권할까요? 패배로 기록돼요.', ok: '기권하기', danger: true });
       if (!ok || this.over) return;
@@ -599,22 +617,74 @@ export class GameController {
 
   _localUndo() {
     if (!this.moves.length) return;
+    if (this.bot) {
+      if (this.over || this.paused) return; // a finished bot game is already recorded
+      this._cancelBot();
+      // back to my turn: drop the bot's reply too, unless it hasn't answered yet
+      const n = Math.max(0, this.moves.length - (this.turn === this.human ? 2 : 1));
+      this._truncate(n);
+      this._maybeBotMove();
+      return;
+    }
     if (this.over) { this.over = null; }
     this._truncate(this.moves.length - 1);
   }
 
   newLocalGame() {
     if (this.mode !== 'local') return;
+    if (this.bot) {
+      this._cancelBot();
+      this.info.gid = 'bot-' + Date.now().toString(36);
+      this.info.at = Date.now();
+      this.recorded = null;
+    }
+    if (this.paused) { this.paused = null; }
     this.over = null;
     this._rebuildTo([]);
     this.viewPly = null;
     this.board.clearAll();
     this.board.setPosition(this.chess.board(), { animate: 'drop' });
-    this.orient = 'w';
-    this.board.setOrientation('w', true);
+    this.orient = this.bot ? this.human : 'w';
+    this.board.setOrientation(this.orient, true);
     this.app.sfx.play('start');
     this.renderAll();
     this._updateInteraction();
+    this._maybeBotMove(1100);
+  }
+
+  // ================================================================= vs computer
+  get human() { return this.bot ? other(this.bot.color) : null; }
+
+  /** ask the engine for a move when it's the bot's turn */
+  _maybeBotMove(minDelay = null) {
+    if (!this.bot || this.over || this.paused || this.destroyed || this._botBusy) return;
+    if (this.turn !== this.bot.color) return;
+    const token = ++this._botToken;
+    this._botBusy = true;
+    const t0 = performance.now();
+    const wait = minDelay ?? 380 + Math.random() * 520; // feels less robotic than an instant reply
+    this.renderAll();
+    this.app.botClient.think(this.moves.slice(), this.bot.level).then((r) => {
+      if (token !== this._botToken || this.destroyed) return;
+      const left = Math.max(0, wait - (performance.now() - t0));
+      this._botTimer = setTimeout(() => {
+        if (token !== this._botToken || this.destroyed) return;
+        this._botBusy = false;
+        if (this.over || this.paused || this.turn !== this.bot.color) { this.renderAll(); return; }
+        if (!r?.uci || !this._doMove(r.uci)) {
+          const ms = this.chess.moves({ verbose: true });
+          if (ms.length) this._doMove(uciOf(ms[Math.floor(Math.random() * ms.length)]));
+        }
+      }, left);
+    });
+  }
+
+  _cancelBot() {
+    if (!this.bot) return;
+    this._botToken++;
+    clearTimeout(this._botTimer);
+    this._botBusy = false;
+    this.app.botClient?.cancel();
   }
 
   // ================================================================= pause
@@ -670,6 +740,7 @@ export class GameController {
       if (Number.isFinite(clk.b)) this.clock.b = clk.b;
     }
     this.paused = { by, run: run !== undefined ? run : prevRun };
+    this._cancelBot(); // re-asked on resume
     this.pauseReq = null;
     clearTimeout(this._pauseReqT);
     this._clearOffers();
@@ -713,6 +784,7 @@ export class GameController {
     this.renderAll();
     this._updateInteraction();
     if (this.isPlayer) this.saveActive();
+    this._maybeBotMove();
   }
 
   _pauseSnapshot() {
@@ -997,6 +1069,7 @@ export class GameController {
   _finish(result, reason, { send = null, fromSync = false } = {}) {
     if (this.over) return;
     this._stopClock();
+    this._cancelBot();
     clearTimeout(this._resumeT);
     clearTimeout(this._pauseReqT);
     this.paused = null;
@@ -1024,7 +1097,20 @@ export class GameController {
     const isAbort = aborted || this.over.result === '*';
     let outcome = 'spec';
     if (this.isPlayer) outcome = isAbort ? 'aborted' : !winner ? 'draw' : winner === this.myColor ? 'win' : 'loss';
+    else if (this.bot) outcome = !winner ? 'draw' : winner === this.human ? 'win' : 'loss';
     else if (this.mode === 'local') outcome = 'local';
+
+    // bot games have their own record (never touch the rating); an instant resign isn't kept
+    if (this.bot && !(reason === 'resign' && plies < 2)) {
+      const cpu = this.info[this.bot.color];
+      this.recorded = store.recordBotGame({
+        id: this.info.gid, at: Date.now(), mode: 'bot', level: this.bot.level, color: this.human,
+        opp: { uid: 'bot', name: cpu.name, av: cpu.av },
+        me: { name: this.app.profile.name },
+        result: outcome, reason: this.over.reason, tc: this.tc, moves: this.moves.join(' '), plies,
+        sets: { w: this.info.w.ps || 'classic', b: this.info.b.ps || 'classic' },
+      });
+    }
 
     if (this.isPlayer && !isAbort) {
       const opp = this.info[other(this.myColor)];
@@ -1087,8 +1173,11 @@ export class GameController {
       <div class="r-players">${card('w')}<div class="r-score">${score}</div>${card('b')}</div>
     </div>`;
     const actions = [];
-    if (this.moves.length) actions.push({ label: '기보 복사', icon: 'copy', close: false, onClick: () => this.copyPgn() });
-    if (this.mode === 'local') actions.push({ label: '새 게임', kind: 'primary', onClick: () => this.newLocalGame() });
+    if (this.moves.length && !this.bot) actions.push({ label: '기보 복사', icon: 'copy', close: false, onClick: () => this.copyPgn() });
+    if (this.bot) {
+      actions.push({ label: '난이도 변경', close: true, onClick: () => { setTimeout(() => openBotSetup(this.app), 0); } });
+      actions.push({ label: '다시 하기', kind: 'primary', icon: 'refresh', onClick: () => this.newLocalGame() });
+    } else if (this.mode === 'local') actions.push({ label: '새 게임', kind: 'primary', onClick: () => this.newLocalGame() });
     else if (this.room) actions.push({ label: '대기실로', kind: 'primary', onClick: () => this.app.backToRoom() });
     actions.unshift({ label: '보드 보기' });
     this._resultModal = openModal({ body, actions, size: 'sm', closeButton: true, onClose: () => { this._resultModal = null; } });
@@ -1151,7 +1240,12 @@ export class GameController {
     else if (e.key === 'ArrowRight') { e.preventDefault(); this.nav('next'); }
     else if (e.key === 'ArrowUp' || e.key === 'Home') { e.preventDefault(); this.nav('first'); }
     else if (e.key === 'ArrowDown' || e.key === 'End') { e.preventDefault(); this.nav('last'); }
-    else if (e.key === 'Escape') this.board.deselect();
+    else if (e.key === 'Escape') {
+      // Esc = pause / resume in games I play; otherwise just drop the selection
+      if (!$('#promo-picker').hidden) return;
+      if (!this.over && (this.isPlayer || this.mode === 'local')) { e.preventDefault(); this.board.deselect(); this.togglePause(); }
+      else this.board.deselect();
+    }
     else if (e.key === 'f' || e.key === 'F') this.flipView();
   }
 
@@ -1166,7 +1260,7 @@ export class GameController {
     const c = new Chess();
     const d = new Date(this.info.at || Date.now());
     const p2 = (n) => String(n).padStart(2, '0');
-    c.setHeader('Event', `${APP_NAME} ${this.mode === 'local' ? '연습' : '친선전'}`);
+    c.setHeader('Event', `${APP_NAME} ${this.bot ? '컴퓨터 대전' : this.mode === 'local' ? '연습' : '친선전'}`);
     c.setHeader('Site', location.origin + location.pathname);
     c.setHeader('Date', `${d.getFullYear()}.${p2(d.getMonth() + 1)}.${p2(d.getDate())}`);
     c.setHeader('White', this.info.w.name);
@@ -1350,6 +1444,12 @@ export class GameController {
     } else if (this.mode === 'spec') {
       h += b('g-pgn', 'copy', '기보 복사', { disabled: !this.moves.length });
       h += b('g-room', 'back', '대기실로', { kind: this.over ? 'primary' : '' });
+    } else if (this.bot) {
+      const mine = this.hist.some((m) => m.color === this.human);
+      h += b('g-takeback', 'undo', '무르기', { disabled: !mine || !!this.over || !!this.paused });
+      if (!this.over) h += this._pauseBtn(b) + b('g-resign', 'flag', '기권', { kind: 'danger' });
+      h += b('g-new', 'refresh', '새 대국', { disabled: !!this.paused, kind: this.over ? 'primary' : '' });
+      if (this.moves.length) h += b('g-pgn', 'copy', '기보');
     } else if (this.mode === 'local') {
       h += b('g-takeback', 'undo', '무르기', { disabled: !this.moves.length || !!this.paused });
       h += `<button class="btn btn-sm ${this.autoFlip ? 'btn-primary' : ''}" data-action="g-autoflip" title="수를 둘 때마다 보드를 돌려요">${icon('swap', 'sm')}<span>자동 회전</span></button>`;
@@ -1365,6 +1465,25 @@ export class GameController {
     const n = box.children.length;
     box.classList.toggle('grid2', n === 4);
     box.classList.toggle('grid3', n >= 5);
+    this._renderTopPause();
+  }
+
+  /** the pause button in the board's top bar (easier to find than the side panel) */
+  _renderTopPause() {
+    const btn = $('#game-pause');
+    if (!btn) return;
+    const show = !this.over && (this.isPlayer || this.mode === 'local');
+    btn.hidden = !show;
+    if (!show) return;
+    const p = this.paused;
+    const theirs = this.isPlayer && this.pauseReq && this.pauseReq !== this.myColor;
+    const label = p ? (p.resumeAt ? '곧 재개…' : '재개') : this.isPlayer && this.pauseReq === this.myColor ? '요청 취소' : theirs ? '정지 수락' : '일시정지';
+    const sig = label + (p ? 1 : 0);
+    if (btn.dataset.sig === sig) return;
+    btn.dataset.sig = sig;
+    btn.innerHTML = `${icon(p ? 'play' : 'pause')}<span>${label}</span><kbd>Esc</kbd>`;
+    btn.classList.toggle('on', !!p || !!theirs);
+    btn.disabled = !!p?.resumeAt;
   }
 
   _pauseBtn(b) {
@@ -1398,6 +1517,10 @@ export class GameController {
         cls = check && mine ? 'check' : mine ? 'mine' : '';
         txt = `${turnDot(t)}${mine ? (check ? '체크! 킹을 지키세요' : '내 차례예요') : '상대 차례'}`;
         if (this.timed && !this.clock.run && !this.moves.length) txt += ' <span class="muted" style="font-weight:600">· 첫 수 후 시계 시작</span>';
+      } else if (this.bot) {
+        const mine = t === this.human;
+        cls = check && mine ? 'check' : mine ? 'mine' : 'thinking';
+        txt = `${turnDot(t)}${mine ? (check ? '체크! 킹을 지키세요' : '내 차례예요') : '봇이 생각 중<i class="dots"><i></i><i></i><i></i></i>'}`;
       } else {
         cls = check ? 'check' : '';
         txt = `${turnDot(t)}${t === 'w' ? '백' : '흑'} 차례${check ? ' · 체크!' : ''}`;

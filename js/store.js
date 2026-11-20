@@ -10,6 +10,7 @@ const K = {
   players: 'cl.players',
   settings: 'cl.settings',
   active: 'cl.active',
+  bot: 'cl.bot',
 };
 const MAX_HISTORY = 300;
 
@@ -212,7 +213,7 @@ export function exportData() {
   const data = {
     app: 'chess-lounge', v: 1, at: Date.now(),
     profile: load(K.profile, null), stats: load(K.stats, null), history: load(K.history, []),
-    players: load(K.players, {}), settings: load(K.settings, {}),
+    players: load(K.players, {}), settings: load(K.settings, {}), bot: load(K.bot, null),
   };
   const json = JSON.stringify(data);
   return btoa(unescape(encodeURIComponent(json)));
@@ -230,9 +231,32 @@ export function importData(code) {
   save(K.history, Array.isArray(d.history) ? d.history : []);
   save(K.players, d.players || {});
   if (d.settings) save(K.settings, d.settings);
+  if (d.bot) save(K.bot, d.bot);
   return d;
 }
 export function resetStats() {
   save(K.stats, emptyStats());
   save(K.history, []);
+  save(K.bot, {});
+}
+
+// ---------------------------------------------------------------- vs computer (kept apart from rating)
+const MAX_BOT_GAMES = 100;
+export function getBotData() {
+  const d = load(K.bot, {}) || {};
+  return { byLevel: d.byLevel && typeof d.byLevel === 'object' ? d.byLevel : {}, games: Array.isArray(d.games) ? d.games : [] };
+}
+export function botRecord(level) {
+  return { w: 0, d: 0, l: 0, ...(getBotData().byLevel[level] || {}) };
+}
+export function recordBotGame(rec) {
+  const d = getBotData();
+  const lv = { w: 0, d: 0, l: 0, ...(d.byLevel[rec.level] || {}) };
+  const k = { win: 'w', loss: 'l', draw: 'd' }[rec.result];
+  if (k) lv[k]++;
+  d.byLevel[rec.level] = lv;
+  d.games.unshift(rec);
+  if (d.games.length > MAX_BOT_GAMES) d.games.length = MAX_BOT_GAMES;
+  save(K.bot, d);
+  return rec;
 }

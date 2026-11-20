@@ -1,0 +1,262 @@
+<!doctype html>
+<html lang="ko" data-theme="light">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+  <title>Chess Lounge · 체스 라운지</title>
+  <meta name="description" content="친구와 함께하는 3D 온라인 체스 — 회원가입 없이 닉네임만으로 바로 한 판!">
+  <meta name="theme-color" content="#f3efe7">
+  <meta property="og:title" content="Chess Lounge · 체스 라운지">
+  <meta property="og:description" content="친구와 함께하는 3D 온라인 체스">
+  <link rel="icon" href="assets/favicon.svg" type="image/svg+xml">
+  <link rel="preconnect" href="https://cdn.jsdelivr.net" crossorigin>
+  <link rel="stylesheet" href="https://cdn.jsdelivr.net/gh/orioncactus/pretendard@v1.3.9/dist/web/variable/pretendardvariable-dynamic-subset.min.css">
+  <link rel="stylesheet" href="css/style.css">
+  <script>
+    // apply the saved theme before first paint (no flash)
+    (function () {
+      var t = 'system';
+      try { t = (JSON.parse(localStorage.getItem('cl.settings') || '{}').theme) || 'system'; } catch (e) {}
+      if (t === 'system') t = matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light';
+      document.documentElement.dataset.theme = t;
+    })();
+  </script>
+  <script type="importmap">
+  {
+    "imports": {
+      "three": "./vendor/three/three.module.js",
+      "three/addons/": "./vendor/three/addons/",
+      "chess.js": "./vendor/chess.js",
+      "mqtt": "./vendor/mqtt.esm.js"
+    }
+  }
+  </script>
+</head>
+<body data-screen="boot">
+  <!-- SVG icon sprite -->
+  <svg width="0" height="0" style="position:absolute" aria-hidden="true">
+    <defs>
+      <symbol id="i-plus" viewBox="0 0 24 24"><path d="M12 5v14M5 12h14"/></symbol>
+      <symbol id="i-bolt" viewBox="0 0 24 24"><path d="M13 2 4 14h8l-1 8 9-12h-8l1-8z"/></symbol>
+      <symbol id="i-refresh" viewBox="0 0 24 24"><path d="M21 12a9 9 0 1 1-2.64-6.36L21 8"/><path d="M21 3v5h-5"/></symbol>
+      <symbol id="i-sun" viewBox="0 0 24 24"><circle cx="12" cy="12" r="4"/><path d="M12 2v2M12 20v2M4.93 4.93l1.41 1.41M17.66 17.66l1.41 1.41M2 12h2M20 12h2M6.34 17.66l-1.41 1.41M19.07 4.93l-1.41 1.41"/></symbol>
+      <symbol id="i-moon" viewBox="0 0 24 24"><path d="M21 12.79A9 9 0 1 1 11.21 3 7 7 0 0 0 21 12.79z"/></symbol>
+      <symbol id="i-gear" viewBox="0 0 24 24"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 1 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06A1.65 1.65 0 0 0 4.68 15a1.65 1.65 0 0 0-1.51-1H3a2 2 0 1 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 1 1 2.83-2.83l.06.06A1.65 1.65 0 0 0 9 4.68a1.65 1.65 0 0 0 1-1.51V3a2 2 0 1 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06A1.65 1.65 0 0 0 19.4 9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 1 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z"/></symbol>
+      <symbol id="i-chart" viewBox="0 0 24 24"><path d="M3 3v18h18"/><path d="m7 15 4-4 3 3 6-7"/></symbol>
+      <symbol id="i-trophy" viewBox="0 0 24 24"><path d="M8 21h8M12 17v4M7 4h10v5a5 5 0 0 1-10 0V4z"/><path d="M17 5h3v2a3 3 0 0 1-3 3M7 5H4v2a3 3 0 0 0 3 3"/></symbol>
+      <symbol id="i-users" viewBox="0 0 24 24"><path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M23 21v-2a4 4 0 0 0-3-3.87M16 3.13a4 4 0 0 1 0 7.75"/></symbol>
+      <symbol id="i-user" viewBox="0 0 24 24"><path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2"/><circle cx="12" cy="7" r="4"/></symbol>
+      <symbol id="i-lock" viewBox="0 0 24 24"><rect x="4" y="11" width="16" height="10" rx="2"/><path d="M8 11V7a4 4 0 0 1 8 0v4"/></symbol>
+      <symbol id="i-clock" viewBox="0 0 24 24"><circle cx="12" cy="12" r="9.5"/><path d="M12 7v5l3.5 2"/></symbol>
+      <symbol id="i-chat" viewBox="0 0 24 24"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/></symbol>
+      <symbol id="i-flag" viewBox="0 0 24 24"><path d="M4 15s1-1 4-1 5 2 8 2 4-1 4-1V3s-1 1-4 1-5-2-8-2-4 1-4 1z"/><path d="M4 22v-7"/></symbol>
+      <symbol id="i-scale" viewBox="0 0 24 24"><path d="M12 3v18M7 21h10M5 7h14M5 7l-3 7a3 3 0 0 0 6 0L5 7zM19 7l-3 7a3 3 0 0 0 6 0l-3-7z"/></symbol>
+      <symbol id="i-undo" viewBox="0 0 24 24"><path d="M3 7v6h6"/><path d="M21 17a9 9 0 0 0-15-6.7L3 13"/></symbol>
+      <symbol id="i-eye" viewBox="0 0 24 24"><path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"/><circle cx="12" cy="12" r="3"/></symbol>
+      <symbol id="i-cube" viewBox="0 0 24 24"><path d="M21 16V8a2 2 0 0 0-1-1.73l-7-4a2 2 0 0 0-2 0l-7 4A2 2 0 0 0 3 8v8a2 2 0 0 0 1 1.73l7 4a2 2 0 0 0 2 0l7-4A2 2 0 0 0 21 16z"/><path d="M3.27 6.96 12 12.01l8.73-5.05M12 22.08V12"/></symbol>
+      <symbol id="i-volume" viewBox="0 0 24 24"><path d="M11 5 6 9H2v6h4l5 4V5z"/><path d="M19.07 4.93a10 10 0 0 1 0 14.14M15.54 8.46a5 5 0 0 1 0 7.07"/></symbol>
+      <symbol id="i-mute" viewBox="0 0 24 24"><path d="M11 5 6 9H2v6h4l5 4V5z"/><path d="m23 9-6 6M17 9l6 6"/></symbol>
+      <symbol id="i-exit" viewBox="0 0 24 24"><path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4"/><path d="m16 17 5-5-5-5M21 12H9"/></symbol>
+      <symbol id="i-back" viewBox="0 0 24 24"><path d="M19 12H5M12 19l-7-7 7-7"/></symbol>
+      <symbol id="i-crown" viewBox="0 0 24 24"><path d="M3 18h18l-2-11-5 5-2-7-2 7-5-5-2 11z"/></symbol>
+      <symbol id="i-copy" viewBox="0 0 24 24"><rect x="9" y="9" width="13" height="13" rx="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/></symbol>
+      <symbol id="i-x" viewBox="0 0 24 24"><path d="M18 6 6 18M6 6l12 12"/></symbol>
+      <symbol id="i-check" viewBox="0 0 24 24"><path d="M20 6 9 17l-5-5"/></symbol>
+      <symbol id="i-swap" viewBox="0 0 24 24"><path d="m17 1 4 4-4 4"/><path d="M3 11V9a4 4 0 0 1 4-4h14"/><path d="m7 23-4-4 4-4"/><path d="M21 13v2a4 4 0 0 1-4 4H3"/></symbol>
+      <symbol id="i-send" viewBox="0 0 24 24"><path d="M22 2 11 13"/><path d="M22 2 15 22l-4-9-9-4 20-7z"/></symbol>
+      <symbol id="i-first" viewBox="0 0 24 24"><path d="M18 19 9 12l9-7v14zM6 19V5"/></symbol>
+      <symbol id="i-prev" viewBox="0 0 24 24"><path d="m15 18-6-6 6-6"/></symbol>
+      <symbol id="i-next" viewBox="0 0 24 24"><path d="m9 18 6-6-6-6"/></symbol>
+      <symbol id="i-last" viewBox="0 0 24 24"><path d="m6 5 9 7-9 7V5zM18 5v14"/></symbol>
+      <symbol id="i-play" viewBox="0 0 24 24"><path d="M6 4l14 8-14 8V4z"/></symbol>
+      <symbol id="i-pause" viewBox="0 0 24 24"><path d="M7 4h3v16H7zM14 4h3v16h-3z"/></symbol>
+      <symbol id="i-mail" viewBox="0 0 24 24"><rect x="2" y="4" width="20" height="16" rx="2"/><path d="m22 6-10 7L2 6"/></symbol>
+      <symbol id="i-board" viewBox="0 0 24 24"><rect x="3" y="3" width="18" height="18" rx="2"/><path d="M3 9h18M3 15h18M9 3v18M15 3v18"/></symbol>
+      <symbol id="i-info" viewBox="0 0 24 24"><circle cx="12" cy="12" r="10"/><path d="M12 16v-4M12 8h.01"/></symbol>
+      <symbol id="i-edit" viewBox="0 0 24 24"><path d="M12 20h9"/><path d="M16.5 3.5a2.12 2.12 0 0 1 3 3L7 19l-4 1 1-4L16.5 3.5z"/></symbol>
+      <symbol id="i-download" viewBox="0 0 24 24"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4M7 10l5 5 5-5M12 15V3"/></symbol>
+      <symbol id="i-upload" viewBox="0 0 24 24"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4M17 8l-5-5-5 5M12 3v12"/></symbol>
+      <symbol id="i-smile" viewBox="0 0 24 24"><circle cx="12" cy="12" r="10"/><path d="M8 14s1.5 2 4 2 4-2 4-2M9 9h.01M15 9h.01"/></symbol>
+      <symbol id="i-wifi" viewBox="0 0 24 24"><path d="M5 12.55a11 11 0 0 1 14.08 0M1.42 9a16 16 0 0 1 21.16 0M8.53 16.11a6 6 0 0 1 6.95 0M12 20h.01"/></symbol>
+      <symbol id="i-seat" viewBox="0 0 24 24"><path d="M12 5v14M5 12h14"/></symbol>
+      <symbol id="i-kick" viewBox="0 0 24 24"><path d="M16 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"/><circle cx="8.5" cy="7" r="4"/><path d="m18 8 5 5M23 8l-5 5"/></symbol>
+    </defs>
+  </svg>
+
+  <!-- 3D stage lives here when used as a background (entry / room) -->
+  <div id="bg-holder"><div id="stage"></div></div>
+  <div id="bg-fallback"></div>
+
+  <div id="app">
+    <!-- ────────────────────────── ENTRY ────────────────────────── -->
+    <section class="screen" id="screen-entry" aria-label="입장">
+      <div class="entry-top">
+        <button class="icon-btn glass" data-action="theme" aria-label="테마 전환" title="테마 전환">
+          <svg class="ic ic-theme-light"><use href="#i-moon"/></svg><svg class="ic ic-theme-dark"><use href="#i-sun"/></svg>
+        </button>
+      </div>
+      <div class="entry-wrap">
+        <form class="entry-card glass" id="entry-form" autocomplete="off">
+          <div class="brand">
+            <span class="brand-mark"><i class="pc pc-wn" data-g="♘"></i></span>
+            <div>
+              <h1 class="brand-title">Chess Lounge</h1>
+              <p class="brand-sub">친구와 함께하는 3D 온라인 체스</p>
+            </div>
+          </div>
+          <label class="field">
+            <span class="field-label">닉네임</span>
+            <input id="entry-name" name="name" maxlength="12" placeholder="닉네임을 입력하세요" required spellcheck="false" enterkeyhint="go">
+          </label>
+          <div class="field">
+            <span class="field-label">캐릭터</span>
+            <div class="avatar-picker" id="entry-avatar"></div>
+          </div>
+          <button class="btn btn-primary btn-lg btn-block" type="submit" id="entry-go">
+            <span>입장하기</span>
+          </button>
+          <div class="entry-welcome" id="entry-welcome" hidden></div>
+          <div class="entry-status" id="entry-status"><i class="dot"></i><span>서버에 연결하는 중…</span></div>
+        </form>
+        <p class="entry-foot">회원가입 없이 닉네임만으로 입장 · 전적은 이 기기에 안전하게 저장돼요</p>
+      </div>
+    </section>
+
+    <!-- ────────────────────────── LOBBY ────────────────────────── -->
+    <section class="screen" id="screen-lobby" aria-label="로비">
+      <header class="topbar">
+        <div class="brand-sm"><span class="brand-mark sm"><i class="pc pc-wn" data-g="♘"></i></span><b>Chess Lounge</b></div>
+        <button class="conn-pill" id="conn-pill" data-action="conn-info"><i class="dot"></i><span>연결 중</span></button>
+        <nav class="top-actions">
+          <button class="tbtn" data-action="practice" title="혼자 연습 / 한 기기에서 둘이 두기"><svg class="ic"><use href="#i-board"/></svg><span>연습</span></button>
+          <button class="tbtn" data-action="stats" title="내 전적"><svg class="ic"><use href="#i-chart"/></svg><span>전적</span></button>
+          <button class="tbtn" data-action="settings" title="설정"><svg class="ic"><use href="#i-gear"/></svg><span>설정</span></button>
+          <button class="icon-btn" data-action="theme" aria-label="테마 전환" title="테마 전환">
+            <svg class="ic ic-theme-light"><use href="#i-moon"/></svg><svg class="ic ic-theme-dark"><use href="#i-sun"/></svg>
+          </button>
+        </nav>
+      </header>
+      <main class="lobby" data-tab="rooms">
+        <section class="panel rooms-panel">
+          <div class="panel-head">
+            <div class="ph-title"><h2>방 목록</h2><span class="count" id="room-count">0</span></div>
+            <div class="seg" id="room-filter" role="tablist">
+              <button class="on" data-f="all">전체</button><button data-f="wait">대기중</button>
+            </div>
+          </div>
+          <div class="room-actions">
+            <button class="btn btn-primary btn-lg" data-action="create-room"><svg class="ic"><use href="#i-plus"/></svg><span>방 만들기</span></button>
+            <button class="btn btn-accent btn-lg" data-action="quick-join"><svg class="ic"><use href="#i-bolt"/></svg><span>빠른 입장</span></button>
+          </div>
+          <div class="room-grid" id="room-grid"></div>
+        </section>
+        <aside class="lobby-side">
+          <section class="panel me-card" id="me-card"></section>
+          <section class="panel users-panel">
+            <div class="panel-head"><div class="ph-title"><h2>접속자</h2><span class="count" id="user-count">0</span></div></div>
+            <ul class="user-list" id="user-list"></ul>
+          </section>
+        </aside>
+        <section class="panel chat-panel" id="lobby-chat">
+          <div class="panel-head"><div class="ph-title"><h2>로비 채팅</h2></div></div>
+          <div class="chat-log" id="lobby-log" aria-live="polite"></div>
+          <form class="chat-form" id="lobby-chat-form">
+            <input maxlength="200" placeholder="메시지를 입력하세요" aria-label="채팅 입력" enterkeyhint="send">
+            <button class="btn btn-primary" type="submit" aria-label="전송"><svg class="ic"><use href="#i-send"/></svg></button>
+          </form>
+        </section>
+      </main>
+      <nav class="mobile-tabs" id="lobby-tabs">
+        <button class="on" data-tab="rooms"><svg class="ic"><use href="#i-board"/></svg><span>방 목록</span></button>
+        <button data-tab="users"><svg class="ic"><use href="#i-users"/></svg><span>접속자</span></button>
+        <button data-tab="chat"><svg class="ic"><use href="#i-chat"/></svg><span>채팅</span><i class="badge" id="chat-badge" hidden></i></button>
+      </nav>
+    </section>
+
+    <!-- ────────────────────────── ROOM (waiting) ────────────────────────── -->
+    <section class="screen" id="screen-room" aria-label="대기실">
+      <header class="topbar room-topbar glass">
+        <button class="tbtn" data-action="leave-room"><svg class="ic"><use href="#i-back"/></svg><span>나가기</span></button>
+        <div class="room-heading">
+          <span class="room-no" id="room-no">#1</span>
+          <b class="room-name" id="room-name">방 제목</b>
+          <svg class="ic room-lock" id="room-lock" hidden><use href="#i-lock"/></svg>
+        </div>
+        <div class="room-head-actions">
+          <button class="icon-btn" data-action="theme" aria-label="테마 전환">
+            <svg class="ic ic-theme-light"><use href="#i-moon"/></svg><svg class="ic ic-theme-dark"><use href="#i-sun"/></svg>
+          </button>
+        </div>
+      </header>
+      <main class="room">
+        <section class="seats" id="seats"></section>
+        <section class="room-lower">
+          <div class="panel glass room-settings" id="room-settings"></div>
+          <div class="panel glass chat-panel" id="room-chat">
+            <div class="panel-head"><div class="ph-title"><h2>대기실 채팅</h2></div><div class="spec-line" id="room-specs"></div></div>
+            <div class="chat-log" id="room-log" aria-live="polite"></div>
+            <form class="chat-form" id="room-chat-form">
+              <input maxlength="200" placeholder="메시지를 입력하세요" aria-label="채팅 입력" enterkeyhint="send">
+              <button class="btn btn-primary" type="submit" aria-label="전송"><svg class="ic"><use href="#i-send"/></svg></button>
+            </form>
+          </div>
+        </section>
+        <div class="room-cta" id="room-cta"></div>
+      </main>
+    </section>
+
+    <!-- ────────────────────────── GAME ────────────────────────── -->
+    <section class="screen" id="screen-game" aria-label="게임">
+      <div class="game-layout">
+        <div class="board-area" id="board-area">
+          <div class="board-top-ui">
+            <button class="tbtn glass" data-action="game-exit" id="game-exit"><svg class="ic"><use href="#i-back"/></svg><span>나가기</span></button>
+            <div class="game-status glass" id="game-status"></div>
+            <div class="view-ctrls glass">
+              <button class="icon-btn" data-action="view-default" title="기본 시점"><svg class="ic"><use href="#i-cube"/></svg></button>
+              <button class="icon-btn" data-action="view-top" title="위에서 보기"><svg class="ic"><use href="#i-board"/></svg></button>
+              <button class="icon-btn" data-action="view-flip" title="보드 돌리기"><svg class="ic"><use href="#i-swap"/></svg></button>
+              <button class="icon-btn" data-action="sound" title="소리"><svg class="ic ic-sound-on"><use href="#i-volume"/></svg><svg class="ic ic-sound-off"><use href="#i-mute"/></svg></button>
+            </div>
+          </div>
+          <div class="board-banner" id="board-banner" hidden></div>
+          <div class="promo-picker glass" id="promo-picker" hidden></div>
+        </div>
+        <aside class="game-side" id="game-side">
+          <div class="pcard" id="pcard-top"></div>
+          <div class="moves-box">
+            <div class="moves-head">
+              <span class="moves-title">기보</span>
+              <div class="moves-nav">
+                <button class="icon-btn sm" data-action="nav-first" title="처음"><svg class="ic"><use href="#i-first"/></svg></button>
+                <button class="icon-btn sm" data-action="nav-prev" title="이전 (←)"><svg class="ic"><use href="#i-prev"/></svg></button>
+                <button class="icon-btn sm" data-action="nav-next" title="다음 (→)"><svg class="ic"><use href="#i-next"/></svg></button>
+                <button class="icon-btn sm" data-action="nav-last" title="마지막"><svg class="ic"><use href="#i-last"/></svg></button>
+              </div>
+            </div>
+            <div class="moves" id="move-list"></div>
+          </div>
+          <div class="game-actions" id="game-actions"></div>
+          <div class="pcard" id="pcard-bottom"></div>
+          <div class="game-chat" id="game-chat">
+            <div class="chat-log" id="game-log" aria-live="polite"></div>
+            <div class="emotes" id="emotes"></div>
+            <form class="chat-form" id="game-chat-form">
+              <input maxlength="200" placeholder="메시지…" aria-label="채팅 입력" enterkeyhint="send">
+              <button class="btn btn-primary" type="submit" aria-label="전송"><svg class="ic"><use href="#i-send"/></svg></button>
+            </form>
+          </div>
+        </aside>
+      </div>
+    </section>
+  </div>
+
+  <div id="modal-root"></div>
+  <div id="toast-root" aria-live="polite"></div>
+  <canvas id="confetti" aria-hidden="true"></canvas>
+  <div id="boot-splash"><div class="spinner"></div></div>
+
+  <noscript><p style="padding:2rem;text-align:center">이 게임은 JavaScript가 필요합니다.</p></noscript>
+  <script type="module" src="js/main.js"></script>
+</body>
+</html>

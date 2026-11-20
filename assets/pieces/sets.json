@@ -5,7 +5,14 @@
       "name": "도토리 다람쥐",
       "desc": "도트 · 소품으로 역할 구분",
       "folder": "squirrel",
-      "images": { "king": "k.png", "queen": "q.png", "rook": "r.png", "bishop": "b.png", "knight": "n.png", "pawn": "p.png" },
+      "images": {
+        "king": "k.png",
+        "queen": "q.png",
+        "rook": "r.png",
+        "bishop": "b.png",
+        "knight": "n.png",
+        "pawn": "p.png"
+      },
       "pixel": true
     },
     {
@@ -13,7 +20,44 @@
       "name": "밤송이 고슴도치",
       "desc": "도트 · 소품으로 역할 구분",
       "folder": "hedgehog",
-      "images": { "king": "k.png", "queen": "q.png", "rook": "r.png", "bishop": "b.png", "knight": "n.png", "pawn": "p.png" },
+      "images": {
+        "king": "k.png",
+        "queen": "q.png",
+        "rook": "r.png",
+        "bishop": "b.png",
+        "knight": "n.png",
+        "pawn": "p.png"
+      },
+      "pixel": true
+    },
+    {
+      "id": "cotton-sheep",
+      "name": "솜사탕 양",
+      "desc": "도트 · 소품으로 역할 구분",
+      "folder": "sheep",
+      "images": {
+        "king": "k.png",
+        "queen": "q.png",
+        "rook": "r.png",
+        "bishop": "b.png",
+        "knight": "n.png",
+        "pawn": "p.png"
+      },
+      "pixel": true
+    },
+    {
+      "id": "charcoal-cat",
+      "name": "숯검댕 고양이",
+      "desc": "도트 · 소품으로 역할 구분",
+      "folder": "cat",
+      "images": {
+        "king": "k.png",
+        "queen": "q.png",
+        "rook": "r.png",
+        "bishop": "b.png",
+        "knight": "n.png",
+        "pawn": "p.png"
+      },
       "pixel": true
     }
   ]

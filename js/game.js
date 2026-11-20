@@ -9,8 +9,12 @@ import { REASONS, PIECE_VALUE, APP_NAME } from './config.js';
 
 const FLAG_GRACE = 2500;      // ms we wait past zero before claiming the opponent's flag
 const ABANDON_WAIT = 45_000;  // ms before we may claim a win from a disconnected opponent
-const EMOTES = ['👍', '👏', '😮', '😅', '🔥', '🤔', '😭'];
-const PHRASES = ['잘 부탁해요!', '좋은 수!', 'GG', '한 판 더?'];
+const EMOTES = ['👍', '👏', '😂', '🔥', '🤔', '😴', '⏰', '😭'];
+const PHRASES = ['잘 부탁해요!', '좋은 수!', '빨리빨리~', 'GG'];
+const EMOTE_OK = new Set([...EMOTES, ...PHRASES, '😮', '😅', '한 판 더?']); // incoming whitelist (incl. older clients)
+// anti-spam: at most EMOTE_MAX within EMOTE_WINDOW ms, and EMOTE_GAP ms between two
+const EMOTE_MAX = 3, EMOTE_WINDOW = 6000, EMOTE_GAP = 700;
+const EMOTE_RX_MAX = 5; // receiver-side cap per sender per window (protects against modified clients)
 
 function uciOf(m) { return m.from + m.to + (m.promotion || ''); }
 function parseUci(u) { return { from: u.slice(0, 2), to: u.slice(2, 4), promotion: u[4] || undefined }; }
@@ -590,17 +594,111 @@ export class GameController {
     this._finish(this.myColor === 'w' ? '1-0' : '0-1', 'abandon', { send: { t: 'claim', gid: this.info.gid } });
   }
 
+  /** ms until the next emote is allowed (0 = now) */
+  _emoteWait() {
+    const now = Date.now();
+    this._emoteLog = (this._emoteLog || []).filter((t) => now - t < EMOTE_WINDOW);
+    const log = this._emoteLog;
+    let wait = 0;
+    if (log.length) wait = Math.max(wait, EMOTE_GAP - (now - log[log.length - 1]));
+    if (log.length >= EMOTE_MAX) wait = Math.max(wait, EMOTE_WINDOW - (now - log[0]));
+    return Math.max(0, wait);
+  }
+
   sendEmote(e) {
-    if (!this.room) return;
-    this.room.send({ t: 'emote', gid: this.info.gid, e });
-    this.showBubble(this.app.uid, e);
+    if (!EMOTE_OK.has(e)) return;
+    const wait = this._emoteWait();
+    if (wait > 0) {
+      this._emoteCooldown(wait);
+      if (wait > EMOTE_GAP && (!this._spamToastAt || Date.now() - this._spamToastAt > 2500)) {
+        this._spamToastAt = Date.now();
+        toast(`도배 방지! ${Math.ceil(wait / 1000)}초 뒤에 다시 보낼 수 있어요`, { type: 'warn', icon: 'smile', timeout: 1800 });
+      }
+      return;
+    }
+    this._emoteLog.push(Date.now());
+    if (this.room) this.room.send({ t: 'emote', gid: this.info.gid, e });
+    const myUid = this.isPlayer || this.mode !== 'local' ? this.app.uid : this.info[this.turn].uid;
+    this.showBubble(myUid, e);
+    this._burst(e, { mine: true, uid: myUid });
     this.app.sfx.play('emote');
+    const next = this._emoteWait();
+    if (next > 0) this._emoteCooldown(next);
   }
 
   onEmote(m) {
-    if (!m.e) return;
-    this.showBubble(m.f, String(m.e).slice(0, 20));
+    const e = String(m.e || '');
+    if (!EMOTE_OK.has(e)) return;
+    const now = Date.now();
+    this._emoteRx ||= {};
+    const log = (this._emoteRx[m.f] = (this._emoteRx[m.f] || []).filter((t) => now - t < EMOTE_WINDOW));
+    if (log.length >= EMOTE_RX_MAX) return; // flood from a sender: silently drop
+    log.push(now);
+    this.showBubble(m.f, e);
+    this._burst(e, { mine: false, uid: m.f });
     this.app.sfx.play('emote');
+  }
+
+  /** Visible cooldown on the emote bar */
+  _emoteCooldown(ms) {
+    const box = $('#emotes');
+    if (!box) return;
+    box.classList.add('cooling');
+    box.style.setProperty('--cd', `${ms}ms`);
+    box.classList.remove('cd-anim');
+    void box.offsetWidth;
+    box.classList.add('cd-anim');
+    clearTimeout(this._cdT);
+    this._cdT = setTimeout(() => box.classList.remove('cooling', 'cd-anim'), ms);
+  }
+
+  /** Emoji fireworks over the board. Opponent's emotes are big and rain from their side. */
+  _burst(e, { mine, uid }) {
+    const area = $('#board-area');
+    if (!area || this.app.screen !== 'game') return;
+    let fx = area.querySelector('.emote-fx');
+    if (!fx) { fx = el('<div class="emote-fx" aria-hidden="true"></div>'); area.appendChild(fx); }
+    const color = this._colorOf(uid);
+    const fromTop = color ? color !== this._bottomColor() : !mine;
+    const isEmoji = EMOTES.includes(e) || /\p{Extended_Pictographic}/u.test(e);
+    const W = fx.clientWidth, H = fx.clientHeight;
+    if (!W || !H) return;
+    while (fx.childElementCount > 40) fx.firstElementChild.remove();
+    if (!isEmoji) {
+      const t = el(`<div class="emote-fx-text">${esc(e)}</div>`);
+      fx.appendChild(t);
+      t.animate([
+        { transform: 'translate(-50%, -50%) scale(.4)', opacity: 0 },
+        { transform: 'translate(-50%, -50%) scale(1.15)', opacity: 1, offset: 0.18 },
+        { transform: 'translate(-50%, -50%) scale(1)', opacity: 1, offset: 0.75 },
+        { transform: 'translate(-50%, -80%) scale(.9)', opacity: 0 },
+      ], { duration: 1700, easing: 'ease-out' }).onfinish = () => t.remove();
+      return;
+    }
+    const n = mine ? 5 : 12;
+    for (let i = 0; i < n; i++) {
+      const s = el(`<span class="emote-fx-p">${esc(e)}</span>`);
+      const size = mine ? 22 + Math.random() * 14 : 30 + Math.random() * 36;
+      const x0 = mine ? W * (0.6 + Math.random() * 0.35) : W * (0.08 + Math.random() * 0.84);
+      const travel = H * (mine ? 0.35 + Math.random() * 0.2 : 0.55 + Math.random() * 0.35);
+      const sway = (Math.random() - 0.5) * (mine ? 60 : 160);
+      const rot = (Math.random() - 0.5) * 70;
+      const y0 = fromTop ? -size : H;
+      const dir = fromTop ? 1 : -1;
+      s.style.fontSize = `${size}px`;
+      s.style.left = `${x0}px`;
+      s.style.top = `${y0}px`;
+      fx.appendChild(s);
+      s.animate([
+        { transform: 'translate(-50%, 0) scale(.5) rotate(0deg)', opacity: 0 },
+        { transform: `translate(calc(-50% + ${sway * 0.3}px), ${dir * travel * 0.25}px) scale(1.1) rotate(${rot * 0.4}deg)`, opacity: 1, offset: 0.15 },
+        { transform: `translate(calc(-50% + ${sway * 0.8}px), ${dir * travel * 0.8}px) scale(1) rotate(${rot}deg)`, opacity: 1, offset: 0.75 },
+        { transform: `translate(calc(-50% + ${sway}px), ${dir * travel}px) scale(.9) rotate(${rot * 1.2}deg)`, opacity: 0 },
+      ], { duration: 1500 + Math.random() * 900, delay: i * (mine ? 70 : 55), easing: 'cubic-bezier(.2,.7,.3,1)', fill: 'backwards' }).onfinish = () => s.remove();
+    }
+    if (!mine) {
+      area.animate([{ transform: 'translateX(0)' }, { transform: 'translateX(-3px)' }, { transform: 'translateX(3px)' }, { transform: 'translateX(0)' }], { duration: 260, iterations: 2 });
+    }
   }
 
   showBubble(uid, text, isChat = false) {

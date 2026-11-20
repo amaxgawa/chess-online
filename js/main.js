@@ -562,8 +562,7 @@ class App {
     $('#emotes').addEventListener('click', (e) => {
       const b = e.target.closest('[data-emote]');
       if (!b || !this.game) return;
-      if (this.game.room) this.game.sendEmote(b.dataset.emote);
-      else this.game.showBubble(this.game.info.w.uid, b.dataset.emote);
+      this.game.sendEmote(b.dataset.emote);
     });
     const chatSubmit = (form) => form.addEventListener('submit', (e) => {
       e.preventDefault();

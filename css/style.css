@@ -539,6 +539,28 @@ code { font-family: ui-monospace, 'Cascadia Code', Consolas, monospace; font-siz
 @keyframes bannerIn { from { opacity: 0; transform: translate(-50%, -10px); } }
 .board-banner.warn { border-color: color-mix(in srgb, var(--accent) 50%, var(--line)); }
 .board-banner .btn { flex: none; }
+.game-status.paused { color: var(--accent); }
+/* pause: the board is blurred so nobody gets free thinking time */
+.pause-veil {
+  position: absolute; inset: 0; z-index: 2; display: grid; place-items: center; padding: 16px;
+  background: color-mix(in srgb, var(--stage-bg, var(--bg)) 45%, transparent);
+  -webkit-backdrop-filter: blur(16px) saturate(.8); backdrop-filter: blur(16px) saturate(.8);
+  animation: veilIn .3s var(--ease);
+}
+.pause-veil[hidden] { display: none; }
+@keyframes veilIn { from { opacity: 0; } }
+.pv-card {
+  display: flex; flex-direction: column; align-items: center; gap: 8px; text-align: center;
+  padding: 26px 30px 24px; border-radius: 24px; box-shadow: var(--shadow-lg); max-width: 340px; animation: popIn .35s var(--ease-spring);
+}
+.pv-ic { width: 60px; height: 60px; border-radius: 50%; display: grid; place-items: center; background: color-mix(in srgb, var(--accent) 16%, transparent); color: var(--accent); }
+.pv-ic .ic { width: 28px; height: 28px; }
+.pv-title { font-size: 22px; font-weight: 900; }
+.pv-sub { font-size: 14px; font-weight: 650; color: var(--text-2); line-height: 1.45; }
+.pv-act:empty { display: none; }
+.pv-act { margin-top: 8px; }
+.pv-count { display: inline-block; font-size: 64px; line-height: 1; color: var(--primary); animation: pvCount 1s var(--ease) infinite; }
+@keyframes pvCount { 0% { transform: scale(1.25); opacity: .4; } 25% { transform: scale(1); opacity: 1; } }
 .promo-picker {
   position: absolute; left: 50%; top: 50%; transform: translate(-50%, -50%); z-index: 6; padding: 14px; border-radius: 22px;
   display: flex; flex-direction: column; align-items: center; gap: 10px; box-shadow: var(--shadow-lg); animation: popIn .3s var(--ease-spring);
@@ -604,6 +626,8 @@ code { font-family: ui-monospace, 'Cascadia Code', Consolas, monospace; font-siz
 
 .game-actions { display: flex; flex-wrap: wrap; gap: 7px; flex: none; }
 .game-actions.grid2 { display: grid; grid-template-columns: 1fr 1fr; }
+.game-actions.grid3 { display: grid; grid-template-columns: repeat(3, 1fr); }
+.game-actions.grid3 .btn { padding: 0 6px; gap: 5px; }
 .game-actions .btn { flex: 1; min-width: 0; padding: 0 10px; }
 .game-actions .btn span { overflow: hidden; text-overflow: ellipsis; }
 
@@ -816,7 +840,7 @@ input[type="range"] { accent-color: var(--primary); width: 160px; }
   .game-side { display: contents; }
   .board-area { order: 2; flex: none; height: min(calc(84vw + 52px), 64dvh); display: flex; flex-direction: column; }
   .board-area #stage { position: relative; inset: auto; flex: 1; min-height: 0; }
-  .board-area .board-top-ui { position: static; padding: 8px 8px 0; flex: none; order: -1; }
+  .board-area .board-top-ui { position: relative; inset: auto; padding: 8px 8px 0; flex: none; order: -1; }
   .board-area .board-top-ui .tbtn.glass { height: 36px; }
   #pcard-top { order: 1; margin: 8px 8px 0; }
   #pcard-bottom { order: 3; margin: 0 8px; }

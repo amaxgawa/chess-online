@@ -15,6 +15,9 @@ const EMOTE_OK = new Set([...EMOTES, ...PHRASES, '😮', '😅', '한 판 더?']
 // anti-spam: at most EMOTE_MAX within EMOTE_WINDOW ms, and EMOTE_GAP ms between two
 const EMOTE_MAX = 3, EMOTE_WINDOW = 6000, EMOTE_GAP = 700;
 const EMOTE_RX_MAX = 5; // receiver-side cap per sender per window (protects against modified clients)
+const PAUSE_REQ_TTL = 20_000;   // an unanswered pause request expires
+const PAUSE_RETRY = 15_000;     // wait after a declined request before asking again
+const RESUME_COUNTDOWN = 3000;  // both sides count down before the clock runs again
 
 function uciOf(m) { return m.from + m.to + (m.promotion || ''); }
 function parseUci(u) { return { from: u.slice(0, 2), to: u.slice(2, 4), promotion: u[4] || undefined }; }
@@ -38,6 +41,9 @@ export class GameController {
     this.viewPly = null;
     this.drawOffer = null;
     this.tbReq = null;
+    this.paused = null;   // { by: color|'local', run: colour whose clock resumes, resumeAt?, resumeBy? }
+    this.pauseReq = null; // colour that asked for a pause and awaits an answer
+    this._pauseCdUntil = 0;
     this.goneAt = {};
     this.destroyed = false;
     this.orient = myColor || (replay?.color) || 'w';
@@ -84,6 +90,10 @@ export class GameController {
         if (this.clock.run) this.clock[this.clock.run] -= away;
         this.clock.since = performance.now();
       }
+      if (this.resume.paused) {
+        this.paused = { by: this.resume.paused.by, run: this.resume.paused.run ?? null };
+        this.clock.run = null;
+      }
       this._syncBoard(false);
       b.setView('default', true);
     } else {
@@ -107,8 +117,12 @@ export class GameController {
     this.destroyed = true;
     clearInterval(this._timer);
     clearInterval(this._auto);
+    clearTimeout(this._resumeT);
+    clearTimeout(this._pauseReqT);
     window.removeEventListener('keydown', this._keys);
     this._closePrompts();
+    const veil = $('#pause-veil');
+    if (veil) veil.hidden = true;
     this._hidePromo();
     this.board.setInteraction({ enabled: false });
     this.board.setCheck(null);
@@ -185,7 +199,8 @@ export class GameController {
     const now = performance.now();
     if (c.run === color) c[color] = c[color] - (now - c.since) + this.tc.i * 1000;
     if (remoteClk != null && Number.isFinite(remoteClk)) c[color] = remoteClk;
-    c.run = other(color);
+    if (this.paused) { this.paused.run = other(color); c.run = null; } // a move that raced the pause
+    else c.run = other(color);
     c.since = now;
   }
 
@@ -221,9 +236,12 @@ export class GameController {
   _updateInteraction() {
     let enabled = false;
     let canPick = () => false;
-    if (this.live && this.isPlayer) {
+    if (this.paused) {
+      enabled = false;
+    } else if (this.live && this.isPlayer) {
       enabled = true;
-      canPick = (color) => color === this.myColor && this.turn === this.myColor;
+      // while my pause request is pending I can't sneak a move in
+      canPick = (color) => color === this.myColor && this.turn === this.myColor && this.pauseReq !== this.myColor;
     } else if (this.live && this.mode === 'local') {
       enabled = true;
       canPick = (color) => color === this.turn;
@@ -240,7 +258,7 @@ export class GameController {
   }
 
   _onBoardMove(from, to) {
-    if (!this.live) return false;
+    if (!this.live || this.paused || (this.isPlayer && this.pauseReq === this.myColor)) return false;
     const cands = this.chess.moves({ square: from, verbose: true }).filter((m) => m.to === to);
     if (!cands.length) return false;
     if (cands.some((m) => m.promotion)) {
@@ -300,6 +318,7 @@ export class GameController {
       }
       case 'draw': this._onDraw(m); break;
       case 'tb': this._onTakeback(m); break;
+      case 'pause': this._onPause(m); break;
       case 'flag': {
         if (this.over || !m.who) return;
         this._flag(m.who, false);
@@ -366,6 +385,7 @@ export class GameController {
       t: 'sync', gid: this.info.gid, to, list: this.moves.join(' '),
       clk: this.timed ? { w: Math.round(this._clockNow('w')), b: Math.round(this._clockNow('b')), run: this.clock.run } : null,
       over: this.over ? { result: this.over.result, reason: this.over.reason } : null,
+      pause: this._pauseSnapshot(),
       info: this.info,
     });
   }
@@ -396,6 +416,7 @@ export class GameController {
       this.clock.since = performance.now();
       this._resyncClock = false;
     }
+    if ('pause' in m && !this.over && !m.over) this._adoptPause(m.pause);
     if (m.over && !this.over) this._finish(m.over.result, m.over.reason, { fromSync: true });
     this._hideBanner('sync');
     this.renderAll();
@@ -441,6 +462,13 @@ export class GameController {
   _clearOffers() {
     this.drawOffer = null;
     this.tbReq = null;
+    if (this.pauseReq) {
+      // a move happened, so the request no longer matches the position
+      const mine = this.pauseReq === this.myColor;
+      this.pauseReq = null;
+      clearTimeout(this._pauseReqT);
+      if (mine && !this.over) toast('수가 진행돼서 일시정지 요청이 취소됐어요', { icon: 'pause' });
+    }
     this._closePrompts();
   }
 
@@ -589,6 +617,216 @@ export class GameController {
     this._updateInteraction();
   }
 
+  // ================================================================= pause
+  // Online: one player asks, the other accepts -> both clocks freeze and the board
+  // is veiled (no free thinking time). Either player may resume; both sides then
+  // count down RESUME_COUNTDOWN ms before the clock runs again. Local: instant.
+  togglePause() {
+    if (this.over) return;
+    if (this.paused) { this.requestResume(); return; }
+    if (this.mode === 'local') { this._applyPause({ by: 'local' }); return; }
+    if (!this.isPlayer || !this.room) return;
+    if (this.pauseReq && this.pauseReq !== this.myColor) { this._acceptPause(); return; }
+    if (this.pauseReq === this.myColor) { this._cancelPauseReq('일시정지 요청을 취소했어요'); return; }
+    const wait = this._pauseCdUntil - Date.now();
+    if (wait > 0) { toast(`${Math.ceil(wait / 1000)}초 뒤에 다시 요청할 수 있어요`, { icon: 'pause' }); return; }
+    this.pauseReq = this.myColor;
+    this.board.deselect();
+    this.room.send({ t: 'pause', gid: this.info.gid, a: 'req', at: this.moves.length });
+    toast('일시정지를 요청했어요. 상대가 수락하면 시계가 멈춰요', { icon: 'pause' });
+    clearTimeout(this._pauseReqT);
+    this._pauseReqT = setTimeout(() => {
+      if (this.pauseReq === this.myColor && !this.destroyed) this._cancelPauseReq('상대가 응답하지 않아 일시정지 요청이 취소됐어요');
+    }, PAUSE_REQ_TTL);
+    this.renderAll();
+    this._updateInteraction();
+  }
+
+  _cancelPauseReq(msg) {
+    this.pauseReq = null;
+    clearTimeout(this._pauseReqT);
+    this.room?.send({ t: 'pause', gid: this.info.gid, a: 'cancel' });
+    if (msg) toast(msg, { icon: 'pause' });
+    this.renderAll();
+    this._updateInteraction();
+  }
+
+  _acceptPause() {
+    if (this.paused || this.over) return;
+    this._applyPause({ by: other(this.myColor) });
+    // the accepter's frozen clocks become the shared truth
+    this.room.send({
+      t: 'pause', gid: this.info.gid, a: 'accept', at: this.moves.length, run: this.paused.run,
+      clk: this.timed ? { w: Math.round(this.clock.w), b: Math.round(this.clock.b) } : null,
+    });
+  }
+
+  _applyPause({ by, run, clk = null }) {
+    if (this.paused || this.over) return;
+    const prevRun = this.clock.run;
+    this._stopClock();
+    if (clk && this.timed) {
+      if (Number.isFinite(clk.w)) this.clock.w = clk.w;
+      if (Number.isFinite(clk.b)) this.clock.b = clk.b;
+    }
+    this.paused = { by, run: run !== undefined ? run : prevRun };
+    this.pauseReq = null;
+    clearTimeout(this._pauseReqT);
+    this._clearOffers();
+    this._hidePromo();
+    this.board.cancelPending();
+    this.board.deselect();
+    this.app.sfx.play('notify');
+    this.renderAll();
+    this._updateInteraction();
+    if (this.isPlayer) this.saveActive();
+  }
+
+  requestResume() {
+    if (!this.paused || this.paused.resumeAt || this.over) return;
+    if (this.mode === 'local') { this._unpause(); return; }
+    if (!this.isPlayer) return;
+    this.room.send({ t: 'pause', gid: this.info.gid, a: 'resume' });
+    this._startResume(this.myColor);
+  }
+
+  _startResume(by, ms = RESUME_COUNTDOWN) {
+    if (!this.paused || this.paused.resumeAt) return;
+    this.paused.resumeAt = Date.now() + ms;
+    this.paused.resumeBy = by;
+    clearTimeout(this._resumeT);
+    this._resumeT = setTimeout(() => this._unpause(), ms);
+    this.app.sfx.play('tick');
+    this.renderAll();
+  }
+
+  _unpause() {
+    if (!this.paused) return;
+    clearTimeout(this._resumeT);
+    const run = this.paused.run;
+    this.paused = null;
+    if (this.timed && run && !this.over) {
+      this.clock.run = run;
+      this.clock.since = performance.now();
+    }
+    if (!this.over) this.app.sfx.play('start');
+    this.renderAll();
+    this._updateInteraction();
+    if (this.isPlayer) this.saveActive();
+  }
+
+  _pauseSnapshot() {
+    const p = this.paused;
+    if (!p) return null;
+    return { by: p.by, run: p.run, resumeIn: p.resumeAt ? Math.max(0, p.resumeAt - Date.now()) : null, resumeBy: p.resumeBy || null };
+  }
+
+  /** take over the pause state from a sync message (the sender is authoritative) */
+  _adoptPause(p) {
+    if (p && !this.paused) {
+      this.paused = { by: p.by, run: p.run ?? null };
+      this.clock.run = null;
+      this.pauseReq = null;
+      clearTimeout(this._pauseReqT);
+      this._clearOffers();
+      this._hidePromo();
+      this.board.cancelPending();
+    } else if (!p && this.paused) {
+      clearTimeout(this._resumeT);
+      this.paused = null; // clock.run already came with the sync's clk
+    }
+    if (p && p.resumeIn != null && this.paused && !this.paused.resumeAt) this._startResume(p.resumeBy || p.by, p.resumeIn);
+    this.renderAll();
+    this._updateInteraction();
+  }
+
+  _onPause(m) {
+    const from = this._colorOf(m.f);
+    if (!from || this.over) return;
+    const name = this.info[from].name;
+    if (m.a === 'req') {
+      if (!this.isPlayer) { this._specNote(`${name}님이 일시정지를 요청했어요`); return; }
+      if (from === this.myColor || this.paused || m.at !== this.moves.length) return;
+      if (this.pauseReq === this.myColor) { this._acceptPause(); return; } // both asked at once
+      this.pauseReq = from;
+      this.app.sfx.play('notify');
+      this._prompts.pause?.close();
+      this._prompts.pause = toast(`<b>${esc(name)}</b>님이 일시정지를 요청했어요`, {
+        html: true, icon: 'pause', timeout: PAUSE_REQ_TTL,
+        actions: [
+          {
+            label: '거절',
+            onClick: () => {
+              if (this.pauseReq !== from) return;
+              this.pauseReq = null;
+              this.room.send({ t: 'pause', gid: this.info.gid, a: 'decline' });
+              this.renderAll();
+            },
+          },
+          { label: '수락', kind: 'primary', onClick: () => { if (this.pauseReq === from) this._acceptPause(); } },
+        ],
+      });
+      this.renderAll();
+    } else if (m.a === 'accept') {
+      if (this.paused) return;
+      if (this.isPlayer) {
+        if (this.pauseReq !== this.myColor) return;
+        if (m.at !== this.moves.length) { this._requestSync(); return; }
+      }
+      this._applyPause({ by: other(from), run: m.run, clk: m.clk });
+      if (this.isPlayer) toast('일시정지됐어요. 준비되면 누구든 재개할 수 있어요', { type: 'success', icon: 'pause' });
+    } else if (m.a === 'decline') {
+      if (!this.isPlayer || this.pauseReq !== this.myColor) return;
+      this.pauseReq = null;
+      clearTimeout(this._pauseReqT);
+      this._pauseCdUntil = Date.now() + PAUSE_RETRY;
+      toast('상대가 일시정지를 거절했어요', { icon: 'pause' });
+      this.renderAll();
+      this._updateInteraction();
+    } else if (m.a === 'cancel') {
+      if (this.pauseReq !== from) return;
+      this.pauseReq = null;
+      this._prompts.pause?.close();
+      delete this._prompts.pause;
+      this.renderAll();
+    } else if (m.a === 'resume') {
+      if (this.paused && !this.paused.resumeAt) this._startResume(from);
+    }
+  }
+
+  _renderPause() {
+    let veil = $('#pause-veil');
+    const p = this.over ? null : this.paused;
+    if (!p) { if (veil) veil.hidden = true; return; }
+    if (!veil) {
+      veil = el(`<div class="pause-veil" id="pause-veil" hidden><div class="pv-card glass">
+        <div class="pv-ic"></div><div class="pv-title"></div><div class="pv-sub"></div><div class="pv-act"></div></div></div>`);
+      $('#board-area').appendChild(veil);
+    }
+    const nameOf = (c) => (c === 'w' || c === 'b' ? this.info[c].name : '');
+    let ic = icon('pause'), title = '일시정지', sub, act = '';
+    if (p.resumeAt) {
+      const s = Math.max(1, Math.ceil((p.resumeAt - Date.now()) / 1000));
+      ic = '';
+      title = `<span class="pv-count">${s}</span>`;
+      sub = this.mode === 'local' ? '곧 재개돼요' : `${esc(nameOf(p.resumeBy) || '')}님이 재개했어요 · 곧 시작해요`;
+    } else {
+      sub = p.by === 'local' ? '잠깐 쉬는 중이에요' : `${esc(nameOf(p.by))}님의 요청으로 멈췄어요${this.timed ? ' · 시계도 멈춰 있어요' : ''}`;
+      if (this.isPlayer || this.mode === 'local') act = `<button class="btn btn-primary" data-action="g-pause">${icon('play', 'sm')}<span>재개하기</span></button>`;
+    }
+    const sig = `${ic}|${title}|${sub}|${act}`;
+    if (veil.dataset.sig !== sig) {
+      veil.dataset.sig = sig;
+      veil.querySelector('.pv-ic').innerHTML = ic;
+      veil.querySelector('.pv-ic').hidden = !ic;
+      veil.querySelector('.pv-title').innerHTML = title;
+      veil.querySelector('.pv-sub').innerHTML = sub;
+      veil.querySelector('.pv-act').innerHTML = act;
+    }
+    veil.classList.toggle('counting', !!p.resumeAt);
+    veil.hidden = false;
+  }
+
   claimWin() {
     if (!this.isPlayer || this.over) return;
     this._finish(this.myColor === 'w' ? '1-0' : '0-1', 'abandon', { send: { t: 'claim', gid: this.info.gid } });
@@ -730,6 +968,7 @@ export class GameController {
       }
     }
     if (Object.keys(this.goneAt).length && !this.over) this._renderGoneBanner();
+    if (this.paused?.resumeAt) this._renderPause();
     this._renderClocks();
   }
 
@@ -758,6 +997,10 @@ export class GameController {
   _finish(result, reason, { send = null, fromSync = false } = {}) {
     if (this.over) return;
     this._stopClock();
+    clearTimeout(this._resumeT);
+    clearTimeout(this._pauseReqT);
+    this.paused = null;
+    this.pauseReq = null;
     const plies = this.moves.length;
     const aborted = this.mode === 'online' && ['resign', 'abandon', 'timeout', 'timeoutvsinsufficient'].includes(reason) && plies < 2;
     this.over = { result: aborted ? '*' : result, reason: aborted ? 'aborted' : reason, at: Date.now() };
@@ -946,6 +1189,7 @@ export class GameController {
       rid: this.room.id, role: this.room.role, room: this.room.state, pw: this.room.pw,
       lastHostColor: this.room.lastHostColor, info: this.info, moves: this.moves,
       clk: this.timed ? { w: this._clockNow('w'), b: this._clockNow('b'), run: this.clock.run } : null,
+      paused: this.paused ? { by: this.paused.by, run: this.paused.run } : null,
     });
   }
 
@@ -1003,6 +1247,7 @@ export class GameController {
     this._renderActions();
     this._renderStatus();
     this._renderClocks();
+    this._renderPause();
   }
 
   _material() {
@@ -1093,8 +1338,10 @@ export class GameController {
     if (this.mode === 'online' && this.isPlayer) {
       if (!this.over) {
         const myMoves = this.hist.some((m) => m.color === this.myColor);
-        h += b('g-takeback', 'undo', this.tbReq?.by === this.myColor ? '요청 중…' : '무르기', { disabled: !myMoves || !!this.tbReq || !this.live });
-        h += b('g-draw', 'scale', this.drawOffer === this.myColor ? '제안 중…' : this.drawOffer ? '무승부 수락' : '무승부', { disabled: this.drawOffer === this.myColor || !this.live, kind: this.drawOffer && this.drawOffer !== this.myColor ? 'primary' : '' });
+        const pz = !!this.paused;
+        h += b('g-takeback', 'undo', this.tbReq?.by === this.myColor ? '요청 중…' : '무르기', { disabled: !myMoves || !!this.tbReq || !this.live || pz });
+        h += b('g-draw', 'scale', this.drawOffer === this.myColor ? '제안 중…' : this.drawOffer ? '무승부 수락' : '무승부', { disabled: this.drawOffer === this.myColor || !this.live || pz, kind: this.drawOffer && this.drawOffer !== this.myColor ? 'primary' : '' });
+        h += this._pauseBtn(b);
         h += b('g-resign', 'flag', '기권', { kind: 'danger' });
       } else {
         h += b('g-pgn', 'copy', '기보 복사');
@@ -1104,9 +1351,10 @@ export class GameController {
       h += b('g-pgn', 'copy', '기보 복사', { disabled: !this.moves.length });
       h += b('g-room', 'back', '대기실로', { kind: this.over ? 'primary' : '' });
     } else if (this.mode === 'local') {
-      h += b('g-takeback', 'undo', '무르기', { disabled: !this.moves.length });
+      h += b('g-takeback', 'undo', '무르기', { disabled: !this.moves.length || !!this.paused });
       h += `<button class="btn btn-sm ${this.autoFlip ? 'btn-primary' : ''}" data-action="g-autoflip" title="수를 둘 때마다 보드를 돌려요">${icon('swap', 'sm')}<span>자동 회전</span></button>`;
-      h += b('g-new', 'refresh', '새 게임');
+      h += b('g-new', 'refresh', '새 게임', { disabled: !!this.paused });
+      if (!this.over) h += this._pauseBtn(b);
       if (this.moves.length) h += b('g-pgn', 'copy', '기보');
     } else if (this.mode === 'replay') {
       h += `<button class="btn btn-sm ${this._auto ? 'btn-primary' : ''}" data-action="g-auto">${icon(this._auto ? 'pause' : 'play', 'sm')}<span>${this._auto ? '정지' : '자동 재생'}</span></button>`;
@@ -1114,7 +1362,18 @@ export class GameController {
       h += b('g-close', 'x', '닫기');
     }
     if (box.innerHTML !== h) box.innerHTML = h;
-    box.classList.toggle('grid2', box.children.length === 4);
+    const n = box.children.length;
+    box.classList.toggle('grid2', n === 4);
+    box.classList.toggle('grid3', n >= 5);
+  }
+
+  _pauseBtn(b) {
+    const p = this.paused;
+    if (p) return b('g-pause', 'play', p.resumeAt ? '곧 재개…' : '재개', { kind: 'primary', disabled: !!p.resumeAt });
+    if (this.mode === 'local') return b('g-pause', 'pause', '일시정지');
+    const theirs = this.pauseReq && this.pauseReq !== this.myColor;
+    const label = this.pauseReq === this.myColor ? '요청 취소' : theirs ? '정지 수락' : '일시정지';
+    return b('g-pause', 'pause', label, { kind: theirs ? 'primary' : '', title: '상대가 수락하면 양쪽 시계가 멈춰요' });
   }
 
   _renderStatus() {
@@ -1126,6 +1385,9 @@ export class GameController {
       const who = r === '1-0' ? '백 승리' : r === '0-1' ? '흑 승리' : r === '1/2-1/2' ? '무승부' : '게임 취소';
       txt = `${icon('flag', 'sm')}${who} · ${esc(REASONS[this.over.reason] || '')}`;
       if (this.mode === 'replay') txt = `${icon('play', 'sm')}다시 보기 · ${who}`;
+    } else if (this.paused) {
+      cls = 'paused';
+      txt = `${icon('pause', 'sm')}${this.paused.resumeAt ? '곧 재개돼요' : '일시정지 중'}`;
     } else if (this.viewPly !== null) {
       txt = `${icon('eye', 'sm')}지난 수 보기 ${this.viewPly}/${this.moves.length}`;
     } else {

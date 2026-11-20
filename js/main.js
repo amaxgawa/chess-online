@@ -354,7 +354,7 @@ class App {
     try {
       const rc = await RoomController.resume(this, active);
       this.room = rc;
-      rc._beginGame(active.info, { resume: { moves: active.moves || [], clk: active.clk, at: active.at } });
+      rc._beginGame(active.info, { resume: { moves: active.moves || [], clk: active.clk, at: active.at, paused: active.paused || null } });
       this.updatePresence();
       toast('진행 중이던 게임에 다시 연결했어요', { type: 'success', icon: 'wifi' });
     } catch (e) {
@@ -614,6 +614,7 @@ class App {
       case 'g-pgn': g?.copyPgn(); break;
       case 'g-room': this.backToRoom(); break;
       case 'g-new': g?.newLocalGame(); break;
+      case 'g-pause': g?.togglePause(); break;
       case 'g-autoflip': if (g) { g.autoFlip = !g.autoFlip; g.renderAll(); toast(g.autoFlip ? '수를 둘 때마다 보드를 돌려요' : '자동 회전을 껐어요', { timeout: 1600, icon: 'swap' }); } break;
       case 'g-auto': g?.toggleAutoplay(); break;
       case 'g-close': this.exitGame(); break;

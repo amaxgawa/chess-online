@@ -560,26 +560,56 @@ export class Board3D {
     let w = h * aspect;
     const maxW = 1.0 * set.scale;
     if (w > maxW) { w = maxW; h = w / aspect; }
+    // inner: re-anchored/shrunk as the camera approaches top-down (see _orientSprites)
+    const inner = new THREE.Group();
+    bb.add(inner);
     const plane = new THREE.Mesh(this._unitPlane, this._spriteMat(set, o.type, o.color));
     plane.scale.set(set.flip && o.color === 'b' ? -w : w, h, 1);
     plane.castShadow = true;
     plane.userData.piece = o;
     plane.renderOrder = 1;
-    bb.add(plane);
+    inner.add(plane);
     if (set.badge) {
       const badge = new THREE.Mesh(this._badgeGeo, this._badgeMat(o.color, o.type));
       const bs = 0.3;
       badge.scale.setScalar(bs);
       badge.position.set(Math.min(w / 2, 0.42) - bs * 0.25, Math.max(h - bs * 0.35, bs * 0.9), 0.02);
       badge.renderOrder = 2;
-      bb.add(badge);
+      inner.add(badge);
     }
-    bb.quaternion.copy(this.camera.quaternion);
     o.group.add(base, bb);
     o.mesh = base;
     o.bb = bb;
+    o.bbInner = inner;
+    o.bbH = h;
+    o.bbFit = Math.min(1, 0.9 / Math.max(w, h));
     o.hits = [plane, base];
     this._sprites.add(o);
+    this._orientSprites([o]);
+  }
+
+  /**
+   * Billboards face the camera. From a steep/top-down view a bottom-anchored
+   * billboard would lie flat, sink under its own base and spill into the next
+   * square, so blend towards a centred, square-fitting card floating above the bases.
+   */
+  _orientSprites(list = this._sprites) {
+    const q = this.camera.quaternion;
+    const fwdY = new THREE.Vector3(0, 0, -1).applyQuaternion(q).y;
+    const polar = Math.acos(Math.min(1, Math.max(-1, -fwdY)));
+    const x = Math.min(1, Math.max(0, (0.6 - polar) / (0.6 - 0.12)));
+    const t = x * x * (3 - 2 * x);
+    const sinP = Math.sin(polar);
+    for (const o of list) {
+      if (!o.bb) continue;
+      o.bb.quaternion.copy(q);
+      const s = 1 + (o.bbFit - 1) * t;
+      const off = t * o.bbH * 0.5 * s;
+      o.bbInner.scale.setScalar(s);
+      o.bbInner.position.y = -off;
+      // keep the card's lower edge above every base (bases are 0.07 tall)
+      o.bb.position.y = 0.06 + t * (off * sinP + 0.05);
+    }
   }
 
   /** sets: { w: preparedSet|null, b: preparedSet|null } — null = classic 3D pieces */
@@ -1241,10 +1271,7 @@ export class Board3D {
       dirty = true;
     }
     if (dirty) {
-      if (this._sprites.size) {
-        const q = this.camera.quaternion;
-        for (const o of this._sprites) o.bb.quaternion.copy(q);
-      }
+      if (this._sprites.size) this._orientSprites();
       this.renderer.render(this.scene, this.camera);
       this.needsRender = false;
     }

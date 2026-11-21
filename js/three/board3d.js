@@ -95,6 +95,8 @@ export class Board3D {
     this.bySquare = new Map();
     this.trays = { w: [], b: [] };
     this.inter = { enabled: false, canPick: () => false, getTargets: () => [], onMove: () => false };
+    this.onHover = null;      // (info | null, clientX, clientY) when the piece under the pointer changes
+    this.onHoverMove = null;  // (clientX, clientY) while it stays on the same piece
     this.selected = null;
     this.targets = new Map();
     this.needsRender = true;
@@ -152,7 +154,7 @@ export class Board3D {
     el.addEventListener('pointermove', (e) => this._onMove(e));
     el.addEventListener('pointerup', (e) => this._onUp(e));
     el.addEventListener('pointercancel', (e) => this._onCancel(e));
-    el.addEventListener('pointerleave', () => { if (!this._gesture) this._setHover(null); });
+    el.addEventListener('pointerleave', (e) => { if (!this._gesture) this._setHover(null); if (e.pointerType === 'mouse') this._emitHover(null); });
     el.addEventListener('contextmenu', (e) => e.preventDefault());
     el.addEventListener('webglcontextlost', (e) => { e.preventDefault(); this.contextLost = true; });
     el.addEventListener('webglcontextrestored', () => { this.contextLost = false; this.needsRender = true; });
@@ -249,6 +251,14 @@ export class Board3D {
       polygonOffset: true, polygonOffsetFactor: -2, polygonOffsetUnits: -2,
     });
     this.markers = [];
+    // hover preview ("where can this piece go?"): blue = mine, red = opponent's
+    const pvMat = (color) => new THREE.MeshBasicMaterial({
+      color, transparent: true, opacity: 0.5, depthWrite: false, toneMapped: false,
+      polygonOffset: true, polygonOffsetFactor: -2, polygonOffsetUnits: -2,
+    });
+    this.pvMats = { mine: pvMat(0x2f6fe0), opp: pvMat(0xe0453a) };
+    this.pvMarkers = [];
+    this.hlPeek = mk(0x2f6fe0, 0.3, 0.0068);
     // promotion / effect ring
     const rg = new THREE.RingGeometry(0.3, 0.42, 64).rotateX(-Math.PI / 2);
     this.fxRing = mk(0xfff2b0, 0, 0.012, null, rg);
@@ -695,6 +705,7 @@ export class Board3D {
    * animate: false | true (slide/pop) | 'drop' (pieces fall in)
    */
   setPosition(board, { animate = true, captured = null } = {}) {
+    this._resetHover();
     this.tw.finish('piece');
     this._clearSelect();
     const want = new Map();
@@ -762,6 +773,7 @@ export class Board3D {
   }
 
   clearAll() {
+    this._resetHover();
     this.tw.finish('piece');
     this._clearSelect();
     for (const o of this.bySquare.values()) this._dropGroup(o);
@@ -848,6 +860,7 @@ export class Board3D {
 
   /** Animate a chess.js verbose move. Returns a promise resolved when done. */
   playMove(m, { instant = false } = {}) {
+    this._resetHover();
     this.tw.finish('piece');
     this._clearSelect(true);
     const o = this.bySquare.get(m.from);
@@ -1034,6 +1047,67 @@ export class Board3D {
     this.needsRender = true;
   }
 
+  // ------------------------------------------------------------ hover preview
+  /** targets: [{ to, capture }], tone: 'mine' | 'opp' */
+  showPreview(square, targets, tone = 'mine') {
+    this.hidePreview();
+    if (this.selected || this._gesture) return;
+    const mat = this.pvMats[tone] || this.pvMats.mine;
+    this.hlPeek.material.color.copy(mat.color);
+    this._place(this.hlPeek, square);
+    targets.forEach((t, i) => {
+      let m = this.pvMarkers[i];
+      if (!m) {
+        m = { dot: new THREE.Mesh(this.dotGeo, mat), ring: new THREE.Mesh(this.ringGeo, mat) };
+        m.dot.renderOrder = m.ring.renderOrder = 3;
+        m.dot.visible = m.ring.visible = false;
+        this.scene.add(m.dot, m.ring);
+        this.pvMarkers.push(m);
+      }
+      const mesh = t.capture ? m.ring : m.dot;
+      mesh.material = mat;
+      const p = this._sqPos(t.to);
+      mesh.position.set(p.x, 0.011, p.z);
+      mesh.visible = true;
+      mesh.scale.setScalar(0.01);
+      this.tw.add({ tag: 'peek', dur: 150, delay: i * 10, ease: Ease.outBack, update: (e) => mesh.scale.setScalar(Math.max(0.01, e)) });
+    });
+    this._peekSq = square;
+    this.needsRender = true;
+  }
+
+  /** client (CSS px) coordinates of a square's centre */
+  screenOf(sq, y = 0.05) {
+    const v = this._sqPos(sq).clone();
+    v.y = y;
+    v.project(this.camera);
+    const r = this.renderer.domElement.getBoundingClientRect();
+    return { x: r.left + ((v.x + 1) / 2) * r.width, y: r.top + ((1 - v.y) / 2) * r.height };
+  }
+
+  hidePreview() {
+    if (!this._peekSq) return;
+    this._peekSq = null;
+    this.tw.finish('peek');
+    for (const m of this.pvMarkers) { m.dot.visible = false; m.ring.visible = false; }
+    this.hlPeek.visible = false;
+    this.needsRender = true;
+  }
+
+  _emitHover(piece, e, touch = false) {
+    const key = piece ? piece.square : null;
+    if (key !== this._hoverPieceSq) {
+      this._hoverPieceSq = key;
+      this.onHover?.(piece ? { square: piece.square, color: piece.color, type: piece.type, touch } : null, e?.clientX, e?.clientY);
+    } else if (piece && e) this.onHoverMove?.(e.clientX, e.clientY);
+  }
+
+  /** the position changed: whatever was previewed is stale */
+  _resetHover() {
+    this.hidePreview();
+    if (this._hoverPieceSq) { this._hoverPieceSq = null; this.onHover?.(null); }
+  }
+
   // ------------------------------------------------------------ interaction
   setInteraction(opts) {
     this.inter = { ...this.inter, ...opts };
@@ -1043,6 +1117,7 @@ export class Board3D {
   _select(o) {
     if (this.selected === o) return;
     this._clearSelect();
+    this.hidePreview();
     this.selected = o;
     this._place(this.hlSel, o.square);
     const targets = this.inter.getTargets(o.square) || [];
@@ -1102,7 +1177,15 @@ export class Board3D {
   }
 
   _onDown(e) {
-    if (!this.inter.enabled || this.idle || (e.pointerType === 'mouse' && e.button !== 0)) return;
+    if (this.idle) return;
+    if (e.pointerType !== 'mouse' && !this._gesture) {
+      // touch has no hover: tapping a piece shows what it is (and, if it isn't ours to move, where it could go)
+      const { hitPiece, square } = this._pick(e);
+      const cand = hitPiece || (square ? this.bySquare.get(square) : null);
+      const isTarget = cand && this.selected && this.targets.has(cand.square);
+      this._emitHover(cand && !isTarget ? cand : null, e, true);
+    }
+    if (!this.inter.enabled || (e.pointerType === 'mouse' && e.button !== 0)) return;
     if (this._gesture) return;
     const { hitPiece, square } = this._pick(e);
     // 1) a target square (or an enemy piece standing on a target) -> move
@@ -1116,6 +1199,7 @@ export class Board3D {
     const cand = hitPiece || (square ? this.bySquare.get(square) : null);
     if (cand && this.inter.canPick(cand.color, cand.square)) {
       this.controls.enabled = false;
+      if (e.pointerType === 'mouse') this._emitHover(null);
       const was = this.selected === cand;
       this._select(cand);
       this._gesture = { type: 'piece', piece: cand, x: e.clientX, y: e.clientY, dragging: false, was, id: e.pointerId };
@@ -1159,9 +1243,12 @@ export class Board3D {
       }
       return;
     }
-    if (g || !this.inter.enabled || this.idle || e.pointerType !== 'mouse') return;
+    if (g || this.idle || e.pointerType !== 'mouse') return;
     // hover feedback (mouse only)
     const { hitPiece, square } = this._pick(e);
+    const hov = hitPiece || (square ? this.bySquare.get(square) : null);
+    this._emitHover(hov || null, e);
+    if (!this.inter.enabled) { this.renderer.domElement.style.cursor = ''; return; }
     const tgt = hitPiece && this.targets.has(hitPiece.square) ? hitPiece.square : square && this.targets.has(square) ? square : null;
     const cand = hitPiece || (square ? this.bySquare.get(square) : null);
     let cursor = '';

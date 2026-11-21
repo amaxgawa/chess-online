@@ -5,7 +5,7 @@ import { Chess } from 'chess.js';
 import { $, el, esc, fmtClock, fmtTC, copyText, fmtDate } from './util.js';
 import { avatar, tierBadge, icon, pieceIcon, toast, openModal, confirmDialog, confetti } from './ui.js';
 import * as store from './store.js';
-import { REASONS, PIECE_VALUE, APP_NAME } from './config.js';
+import { REASONS, PIECE_VALUE, APP_NAME, PIECE_NAMES } from './config.js';
 import { openBotSetup } from './bot.js';
 
 const FLAG_GRACE = 2500;      // ms we wait past zero before claiming the opponent's flag
@@ -16,6 +16,14 @@ const EMOTE_OK = new Set([...EMOTES, ...PHRASES, '😮', '😅', '한 판 더?']
 // anti-spam: at most EMOTE_MAX within EMOTE_WINDOW ms, and EMOTE_GAP ms between two
 const EMOTE_MAX = 3, EMOTE_WINDOW = 6000, EMOTE_GAP = 700;
 const EMOTE_RX_MAX = 5; // receiver-side cap per sender per window (protects against modified clients)
+const PIECE_RULES = {
+  k: '모든 방향으로 한 칸씩 움직여요',
+  q: '가로·세로·대각선으로 막힐 때까지 얼마든지 가요',
+  r: '가로·세로로 막힐 때까지 얼마든지 가요',
+  b: '대각선으로 막힐 때까지 얼마든지 가요',
+  n: 'L자(두 칸 + 옆으로 한 칸)로 뛰어요. 다른 말을 넘을 수 있어요',
+  p: '앞으로 한 칸(첫 수는 두 칸까지), 잡을 때는 대각선 앞 한 칸',
+};
 const PAUSE_REQ_TTL = 20_000;   // an unanswered pause request expires
 const PAUSE_RETRY = 15_000;     // wait after a declined request before asking again
 const RESUME_COUNTDOWN = 3000;  // both sides count down before the clock runs again
@@ -109,6 +117,8 @@ export class GameController {
     if (this.mode === 'spec' || (this.isPlayer && (this.resume || late))) this._requestSync();
     if (this.isPlayer) this.saveActive();
     this._timer = setInterval(() => this._tick(), 100);
+    b.onHover = (info, x, y) => this._onHover(info, x, y);
+    b.onHoverMove = (x, y) => this._placeTip(x, y);
     this._keys = (e) => this._onKey(e);
     window.addEventListener('keydown', this._keys);
     this.renderAll();
@@ -133,6 +143,11 @@ export class GameController {
     this.board.setInteraction({ enabled: false });
     this.board.setCheck(null);
     $('#board-banner').hidden = true;
+    this.board.onHover = null;
+    this.board.onHoverMove = null;
+    this.board.hidePreview();
+    const tip = $('#piece-tip');
+    if (tip) tip.hidden = true;
   }
 
   // ================================================================= core move handling
@@ -652,6 +667,119 @@ export class GameController {
     this._maybeBotMove(1100);
   }
 
+  // ================================================================= hover peek
+  // Hovering (or, on touch, tapping) any piece shows what it is and every square it
+  // could move to. For the side not to move we ask chess.js as if it were their turn.
+  _peekChess() {
+    if (this.viewPly === null || this.viewPly >= this.moves.length) return this.chess;
+    const tmp = new Chess();
+    for (let i = 0; i < this.viewPly; i++) tmp.move(parseUci(this.moves[i]));
+    return tmp;
+  }
+
+  _peekMoves(chess, sq, color) {
+    let c = chess;
+    if (color !== chess.turn()) {
+      const f = chess.fen().split(' ');
+      f[1] = color;
+      f[3] = '-';
+      try { c = new Chess(f.join(' '), { skipValidation: true }); } catch { return []; }
+    }
+    const seen = new Map();
+    let list = [];
+    try { list = c.moves({ square: sq, verbose: true }); } catch { return []; }
+    for (const m of list) {
+      if (m.captured === 'k') continue; // only possible in the "their turn" view when we're in check
+      if (!seen.has(m.to)) seen.set(m.to, { to: m.to, capture: !!m.captured, captured: m.captured, flags: m.flags, promo: !!m.promotion });
+    }
+    return [...seen.values()];
+  }
+
+  _isMineColor(c) {
+    if (this.isPlayer) return c === this.myColor;
+    if (this.bot) return c === this.human;
+    return c === this.orient;
+  }
+
+  _onHover(info, x, y) {
+    const tip = this._tipEl();
+    const off = !info || this.destroyed || this.paused || this.app.settings.movePreview === false || this.app.screen !== 'game';
+    const chess = off ? null : this._peekChess();
+    const p = chess?.get(info.square);
+    if (off || !p) {
+      this._tipTouch = false;
+      tip.hidden = true;
+      this.board.hidePreview();
+      return;
+    }
+    const moves = this._peekMoves(chess, info.square, p.color);
+    const mine = this._isMineColor(p.color);
+    this.board.showPreview(info.square, moves, mine ? 'mine' : 'opp');
+    const toMove = p.color === chess.turn();
+    const caps = [...new Set(moves.filter((m) => m.captured).sort((a, b) => PIECE_VALUE[b.captured] - PIECE_VALUE[a.captured]).map((m) => PIECE_NAMES[m.captured]))];
+    const extra = [];
+    if (moves.some((m) => /[kq]/.test(m.flags))) extra.push('캐슬링 가능');
+    if (moves.some((m) => m.flags.includes('e'))) extra.push('앙파상 가능');
+    if (moves.some((m) => m.promo)) extra.push('승급 가능');
+    const attackers = chess.attackers(info.square, other(p.color)).map((s) => chess.get(s)?.type).filter(Boolean);
+    const owner = this.isPlayer || this.bot ? (mine ? '내 말' : '상대 말') : p.color === 'w' ? '백' : '흑';
+    const when = toMove ? '지금' : '다음 차례에';
+    let h = `<div class="pt-head">${pieceIcon(p.color + p.type, '', true)}<b>${PIECE_NAMES[p.type]}</b><span class="tag">${owner}</span></div>
+      <div class="pt-rule">${PIECE_RULES[p.type]}</div>
+      <div class="pt-n">${moves.length ? `${when} 갈 수 있는 칸 <b>${moves.length}</b>개` : `${when} 움직일 수 있는 칸이 없어요`}${extra.length ? ` · ${extra.join(' · ')}` : ''}</div>`;
+    if (caps.length) h += `<div class="pt-cap">잡을 수 있는 말: <b>${caps.join(', ')}</b></div>`;
+    if (attackers.length) {
+      const names = [...new Set(attackers.map((t) => PIECE_NAMES[t]))].join(', ');
+      h += `<div class="pt-warn">${p.type === 'k' ? '체크! ' : ''}${names}에게 공격받고 있어요</div>`;
+    }
+    tip.innerHTML = h;
+    tip.classList.toggle('opp', !mine);
+    tip.hidden = false;
+    this._tipTouch = !!info.touch;
+    this._peek = { square: info.square, targets: moves.map((m) => m.to) };
+    this._placeTip(x, y);
+  }
+
+  _tipEl() {
+    let tip = $('#piece-tip');
+    if (!tip) {
+      tip = el('<div class="piece-tip" id="piece-tip" role="tooltip" hidden></div>');
+      $('#board-area').appendChild(tip);
+    }
+    return tip;
+  }
+
+  _placeTip(x, y) {
+    const tip = $('#piece-tip');
+    if (!tip || tip.hidden || !Number.isFinite(x)) return;
+    const area = $('#board-area').getBoundingClientRect();
+    const w = tip.offsetWidth, h = tip.offsetHeight;
+    const cx = x - area.left, cy = y - area.top, g = 18;
+    // squares the tooltip must not hide: the piece itself and every square it can reach
+    const pts = [];
+    if (this._peek) {
+      for (const sq of [this._peek.square, ...this._peek.targets]) {
+        const s = this.board.screenOf(sq);
+        pts.push([s.x - area.left, s.y - area.top]);
+      }
+    }
+    const cands = this._tipTouch
+      ? [[cx - w / 2, cy - h - 36], [cx - w / 2, cy + 40], [cx + g, cy - h - g], [cx - w - g, cy - h - g], [cx + g, cy + g], [cx - w - g, cy + g]]
+      : [[cx + g, cy + g], [cx + g, cy - h - g], [cx - w - g, cy + g], [cx - w - g, cy - h - g], [cx - w / 2, cy - h - 30], [cx - w / 2, cy + 30]];
+    let best = null;
+    cands.forEach(([l0, t0], i) => {
+      const l = Math.max(8, Math.min(area.width - w - 8, l0));
+      const t = Math.max(8, Math.min(area.height - h - 8, t0));
+      const pad = 16;
+      let score = i * 0.01 + (Math.abs(l - l0) + Math.abs(t - t0)) * 0.02;
+      for (const [px, py] of pts) if (px > l - pad && px < l + w + pad && py > t - pad && py < t + h + pad) score += 1;
+      if (cx > l - 6 && cx < l + w + 6 && cy > t - 6 && cy < t + h + 6) score += 50; // never under the pointer / finger
+      if (!best || score < best.score) best = { l, t, score };
+    });
+    tip.style.left = best.l + 'px';
+    tip.style.top = best.t + 'px';
+  }
+
   // ================================================================= vs computer
   get human() { return this.bot ? other(this.bot.color) : null; }
 
@@ -741,6 +869,7 @@ export class GameController {
     }
     this.paused = { by, run: run !== undefined ? run : prevRun };
     this._cancelBot(); // re-asked on resume
+    this._onHover(null);
     this.pauseReq = null;
     clearTimeout(this._pauseReqT);
     this._clearOffers();

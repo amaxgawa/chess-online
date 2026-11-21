@@ -67,6 +67,7 @@ export const DEFAULT_SETTINGS = {
   sound: true,
   volume: 0.7,
   showLegal: true,
+  movePreview: true,
   animSpeed: 1,
   autoQueen: false,
   broker: 'auto',

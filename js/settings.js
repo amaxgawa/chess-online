@@ -109,6 +109,7 @@ export function openSettings(app, tab = 'general') {
         ${[[0.7, '여유롭게'], [1, '보통'], [1.6, '빠르게']].map(([k, v]) => `<button type="button" class="chip ${s.animSpeed === k ? 'on' : ''}" data-speed="${k}">${v}</button>`).join('')}
       </div></div>
       <div>${switchRow('st-legal', '이동 가능한 칸 표시', '기물을 집으면 갈 수 있는 칸에 점을 보여줘요', s.showLegal)}</div>
+      <div>${switchRow('st-peek', '말 정보 · 경로 미리보기', '말에 마우스를 올리면(모바일은 상대 말을 탭) 어떤 말인지와 갈 수 있는 칸을 보여줘요', s.movePreview !== false)}</div>
     </div>
     <div data-pane="data" hidden style="display:flex;flex-direction:column;gap:14px">
       <div class="form-row"><span class="lbl">${icon('download')}백업 코드 만들기</span>
@@ -160,6 +161,7 @@ export function openSettings(app, tab = 'general') {
   on('#st-autoq', 'change', (e) => app.saveSettings({ autoQueen: e.target.checked }));
   on('#st-confirm', 'change', (e) => app.saveSettings({ confirmResign: e.target.checked }));
   on('#st-legal', 'change', (e) => app.saveSettings({ showLegal: e.target.checked }));
+  on('#st-peek', 'change', (e) => { app.saveSettings({ movePreview: e.target.checked }); if (!e.target.checked) app.game?._onHover?.(null); });
   const chipGroup = (sel, attr, fn) => on(sel, 'click', (e) => {
     const b = e.target.closest(`[data-${attr}]`);
     if (!b) return;

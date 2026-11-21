@@ -913,3 +913,20 @@ input[type="range"] { accent-color: var(--primary); width: 160px; }
 .bot-pane-head { display: flex; align-items: center; justify-content: space-between; gap: 10px; font-weight: 800; font-size: 14px; color: var(--text-2); }
 @media (max-width: 860px) { .pause-btn kbd { display: none; } }
 @media (max-width: 420px) { .bot-lv .bl-main small { display: none; } }
+
+/* ═════════════════════════════ PIECE HOVER TOOLTIP ═════════════════════════════ */
+.piece-tip {
+  --tone: #2f6fe0;
+  position: absolute; z-index: 6; pointer-events: none; width: max-content; max-width: 250px;
+  display: flex; flex-direction: column; gap: 4px; padding: 10px 12px 10px 13px; border-radius: 14px;
+  background: var(--surface); border: 1px solid var(--line); border-left: 4px solid var(--tone); box-shadow: var(--shadow-lg);
+  font-size: 12.5px; font-weight: 600; line-height: 1.45; color: var(--text-2); animation: tipIn .14s var(--ease);
+}
+.piece-tip.opp { --tone: #e0453a; }
+.piece-tip[hidden] { display: none; }
+@keyframes tipIn { from { opacity: 0; transform: translateY(4px); } }
+.piece-tip .pt-head { display: flex; align-items: center; gap: 7px; font-size: 15px; color: var(--text); }
+.piece-tip .pt-head .pc { width: 24px; height: 24px; font-size: 20px; }
+.piece-tip .tag { margin-left: auto; padding: 2px 8px; border-radius: 999px; font-size: 11px; font-weight: 800; color: var(--tone); background: color-mix(in srgb, var(--tone) 14%, transparent); }
+.piece-tip b { color: var(--text); }
+.piece-tip .pt-warn { color: var(--danger); font-weight: 750; }

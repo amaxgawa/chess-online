@@ -719,7 +719,7 @@ export class GameController {
     const caps = [...new Set(moves.filter((m) => m.captured).sort((a, b) => PIECE_VALUE[b.captured] - PIECE_VALUE[a.captured]).map((m) => PIECE_NAMES[m.captured]))];
     const extra = [];
     if (moves.some((m) => /[kq]/.test(m.flags))) extra.push('캐슬링 가능');
-    if (moves.some((m) => m.flags.includes('e'))) extra.push('앙파상 가능');
+    const ep = moves.find((m) => m.flags.includes('e'));
     if (moves.some((m) => m.promo)) extra.push('승급 가능');
     const attackers = chess.attackers(info.square, other(p.color)).map((s) => chess.get(s)?.type).filter(Boolean);
     const owner = this.isPlayer || this.bot ? (mine ? '내 말' : '상대 말') : p.color === 'w' ? '백' : '흑';
@@ -728,6 +728,11 @@ export class GameController {
       <div class="pt-rule">${PIECE_RULES[p.type]}</div>
       <div class="pt-n">${moves.length ? `${when} 갈 수 있는 칸 <b>${moves.length}</b>개` : `${when} 움직일 수 있는 칸이 없어요`}${extra.length ? ` · ${extra.join(' · ')}` : ''}</div>`;
     if (caps.length) h += `<div class="pt-cap">잡을 수 있는 말: <b>${caps.join(', ')}</b></div>`;
+    if (ep) {
+      // the captured pawn sits beside us, not on the destination square — explain the empty-square capture
+      const victim = ep.to[0] + info.square[1];
+      h += `<div class="pt-ep"><b>앙파상</b> · 방금 두 칸 전진한 ${victim} 폰을 빈칸 ${ep.to}로 가면서 잡을 수 있어요. ${toMove ? '이번 차례에만' : '다음 차례에만'} 가능한 특수 규칙이에요.</div>`;
+    }
     if (attackers.length) {
       const names = [...new Set(attackers.map((t) => PIECE_NAMES[t]))].join(', ');
       h += `<div class="pt-warn">${p.type === 'k' ? '체크! ' : ''}${names}에게 공격받고 있어요</div>`;

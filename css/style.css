@@ -930,3 +930,4 @@ input[type="range"] { accent-color: var(--primary); width: 160px; }
 .piece-tip .tag { margin-left: auto; padding: 2px 8px; border-radius: 999px; font-size: 11px; font-weight: 800; color: var(--tone); background: color-mix(in srgb, var(--tone) 14%, transparent); }
 .piece-tip b { color: var(--text); }
 .piece-tip .pt-warn { color: var(--danger); font-weight: 750; }
+.piece-tip .pt-ep { margin-top: 2px; padding: 6px 8px; border-radius: 9px; background: color-mix(in srgb, var(--tone) 10%, transparent); color: var(--text); font-weight: 600; }
